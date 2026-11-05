@@ -1,0 +1,48 @@
+{
+  "name": "dsh-pc-bridge",
+  "version": "0.1.0",
+  "description": "A small HTTP bridge inside DeepSeek Harness that lets a peer (for example a cloud QQ bot) ping and run shell commands on this machine, plus an ssh reverse-tunnel supervisor. 让远端通过回环 HTTP 桥在电脑上执行命令。",
+  "type": "module",
+  "license": "MIT",
+  "main": "./index.js",
+  "bin": {
+    "pcctl": "./bin/pcctl.mjs"
+  },
+  "exports": {
+    ".": "./index.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "lib/",
+    "bin/",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "test/",
+    "README.md",
+    "README.en.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "dsh-plugin",
+    "bridge",
+    "remote-exec",
+    "ssh-tunnel"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "电脑执行桥",
+    "description": "在回环地址上监听 ping 与命令执行请求，可选维持一条 ssh 反向隧道；每个请求都要带共享密钥，Agent 通过 pc_ping / pc_exec 调用。"
+  }
+}

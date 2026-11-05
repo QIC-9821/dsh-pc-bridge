@@ -1,0 +1,7 @@
+- insert:
+    - id: dsh-pc-bridge
+      name: 'dsh-pc-bridge'
+      config:
+        role: both
+        listenHost: 127.0.0.1
+        listenPort: 18790

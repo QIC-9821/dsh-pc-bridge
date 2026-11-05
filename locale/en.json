@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "PC bridge (ping / exec over HTTP)",
+    "description": "Listens on loopback for ping and shell-command requests, optionally keeps an ssh reverse tunnel open. Each request carries a shared secret; tools pc_ping and pc_exec let the agent use it."
+  }
+}
