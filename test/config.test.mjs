@@ -16,21 +16,25 @@ test('defaults land under DSH_HOME', () => {
 
 test('volatile config references are unwrapped', () => {
   const ref = (value) => ({ get: () => value })
+  // Paths must be native: a Windows absolute path is relative on Linux, where
+  // normalizeConfig would resolve it under DSH_HOME.
+  const home = process.platform === 'win32' ? 'C:\\data\\dsh' : '/srv/dsh-home'
+  const secret = process.platform === 'win32' ? 'C:/x/secret' : '/var/lib/dsh/secret'
   const cfg = normalizeConfig(
     {
       role: ref('host'),
       listenPort: ref(19001),
       tunnelEnabled: ref(true),
-      secretFile: ref('C:/x/secret'),
+      secretFile: ref(secret),
       sshHost: ref('example.com'),
       maxTimeoutMs: ref(120000),
     },
-    { DSH_HOME: 'C:\\data\\dsh' },
+    { DSH_HOME: home },
   )
   assert.equal(cfg.role, 'host')
   assert.equal(cfg.listenPort, 19001)
   assert.equal(cfg.tunnelEnabled, true)
-  assert.equal(cfg.secretFile, 'C:/x/secret')
+  assert.equal(cfg.secretFile, secret)
   assert.equal(cfg.sshHost, 'example.com')
   assert.equal(cfg.maxTimeoutMs, 120000)
 })

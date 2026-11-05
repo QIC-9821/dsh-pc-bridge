@@ -1,5 +1,10 @@
 # dsh-pc-bridge
 
+[![npm](https://img.shields.io/npm/v/dsh-pc-bridge.svg)](https://www.npmjs.com/package/dsh-pc-bridge)
+[![CI](https://github.com/QIC-9821/dsh-pc-bridge/actions/workflows/ci.yml/badge.svg)](https://github.com/QIC-9821/dsh-pc-bridge/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Node](https://img.shields.io/node/v/dsh-pc-bridge.svg)](package.json)
+
 A DeepSeek Harness plugin that runs a **loopback-only** HTTP bridge on a machine so a peer (a cloud QQ bot, a build runner, another agent) can ping it and run shell commands; optionally it also keeps an **ssh reverse tunnel** open so the remote side can reach that loopback port.
 
 It ships a `pcctl` CLI too, so the bridge is usable from a terminal without Harness.
@@ -13,7 +18,20 @@ It ships a `pcctl` CLI too, so the bridge is usable from a terminal without Harn
 
 ## Install
 
-Install this directory as a Harness bundle (the plugin manager can install a bundle from an absolute path), or add it to your profile dependencies. Node.js ≥ 22; no third-party runtime dependencies.
+Pick one:
+
+```bash
+# npm (recommended)
+dsh plugin add dsh-pc-bridge
+
+# straight from the GitHub tag
+dsh plugin add github:QIC-9821/dsh-pc-bridge#v0.1.0
+
+# local checkout (development)
+dsh plugin add /absolute/path/to/dsh-pc-bridge
+```
+
+You can also install this directory as a Harness bundle from the plugin manager. Node.js ≥ 22; no third-party runtime dependencies.
 
 ```yaml
 - id: dsh-pc-bridge

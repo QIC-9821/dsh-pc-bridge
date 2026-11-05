@@ -1,5 +1,10 @@
 # dsh-pc-bridge
 
+[![npm](https://img.shields.io/npm/v/dsh-pc-bridge.svg)](https://www.npmjs.com/package/dsh-pc-bridge)
+[![CI](https://github.com/QIC-9821/dsh-pc-bridge/actions/workflows/ci.yml/badge.svg)](https://github.com/QIC-9821/dsh-pc-bridge/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Node](https://img.shields.io/node/v/dsh-pc-bridge.svg)](package.json)
+
 DeepSeek Harness 插件：在电脑上开一个**只监听回环**的小 HTTP 桥，让对端（例如云端的 QQ 机器人）能 `ping` 这台电脑、并按需执行 shell 命令；可选同时维持一条 **ssh 反向隧道**，让远端能访问到这台电脑的回环端口。
 
 仓库里同时提供一个命令行 `pcctl`，不依赖 Harness 也可以在终端里直接调桥。
@@ -13,7 +18,20 @@ DeepSeek Harness 插件：在电脑上开一个**只监听回环**的小 HTTP �
 
 ## 安装
 
-把本目录作为 Harness 插件（bundle）安装，例如用插件管理器的 bundle 安装并指定本目录绝对路径，或把它加进 profile 依赖。要求 Node.js ≥ 22；没有任何第三方运行时依赖。
+三种方式选一：
+
+```bash
+# npm（推荐）
+dsh plugin add dsh-pc-bridge
+
+# 直接从 GitHub tag 装
+dsh plugin add github:QIC-9821/dsh-pc-bridge#v0.1.0
+
+# 本地目录（开发时）
+dsh plugin add /absolute/path/to/dsh-pc-bridge
+```
+
+也可以在插件管理器里把本目录当 bundle 安装。要求 Node.js ≥ 22；没有任何第三方运行时依赖。
 
 安装后在 Harness 设置里找到「电脑执行桥」，按下面的键配置。
 
