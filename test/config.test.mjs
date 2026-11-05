@@ -40,3 +40,28 @@ test('a root volatile reference map is unwrapped', () => {
   assert.equal(cfg.listenPort, 19002)
   assert.equal(cfg.sshUser, 'root')
 })
+
+test('accessor-style references ({ get value() }) are unwrapped', () => {
+  // Harness exposes volatile fields as `{ get <value> }` accessors, not
+  // `{ get() }` methods; both shapes must normalize the same way.
+  const ref = (value) => ({
+    get get() {
+      return value
+    },
+  })
+  const cfg = normalizeConfig(
+    {
+      role: ref('client'),
+      listenPort: ref(19003),
+      peerUrl: ref('http://10.0.0.5:18790'),
+      sshKeyPath: ref('C:/keys/id'),
+      tunnelEnabled: ref('true'),
+    },
+    { DSH_HOME: 'C:\\data\\dsh' },
+  )
+  assert.equal(cfg.role, 'client')
+  assert.equal(cfg.listenPort, 19003)
+  assert.equal(cfg.peerUrl, 'http://10.0.0.5:18790')
+  assert.equal(cfg.sshKeyPath, 'C:/keys/id')
+  assert.equal(cfg.tunnelEnabled, true)
+})
