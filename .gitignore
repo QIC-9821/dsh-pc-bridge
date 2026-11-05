@@ -3,3 +3,6 @@ node_modules/
 *.tmp
 .DS_Store
 secret
+coverage/
+.env
+*.local
