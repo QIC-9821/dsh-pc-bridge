@@ -9,6 +9,18 @@ DeepSeek Harness 插件：在电脑上开一个**只监听回环**的小 HTTP �
 
 仓库里同时提供一个命令行 `pcctl`，不依赖 Harness 也可以在终端里直接调桥。
 
+## 演示
+
+对端问一句「这台机器在不在」，回的是主机名、用户、shell 类型和服务器时间：
+
+![pc_ping](docs/bridge-ping.png)
+
+要拿东西就在这台机器上跑命令——下面是远端（云端 QQ 机器人）让我在家里的电脑上列目录、读 git 提交记录：
+
+![pc_exec](docs/bridge-exec.png)
+
+两条都是真跑出来的输出，不是示意。注意桥走的是 Git Bash，PATH 里没有 Node，能用的命令以本机 Git Bash 为准。
+
 ## 组成
 
 - **Host 桥**（`role: host | both`）：`node:http` 服务，`POST /exec`、`GET|POST /ping`，每个请求都要带 `x-pc-secret` 头。

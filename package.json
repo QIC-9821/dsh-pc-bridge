@@ -1,6 +1,6 @@
 {
   "name": "dsh-pc-bridge",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Loopback HTTP bridge that lets a peer machine ping and run shell commands on this PC, plus an optional ssh reverse-tunnel supervisor.",
   "type": "module",
   "license": "MIT",

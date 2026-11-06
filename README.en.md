@@ -9,6 +9,18 @@ A DeepSeek Harness plugin that runs a **loopback-only** HTTP bridge on a machine
 
 It ships a `pcctl` CLI too, so the bridge is usable from a terminal without Harness.
 
+## Demo
+
+Ask whether the machine is up and you get host, user, shell and the server clock:
+
+![pc_ping](docs/bridge-ping.png)
+
+Want something from it, run a command there — below the cloud bot lists a directory and reads the last commits on the home machine:
+
+![pc_exec](docs/bridge-exec.png)
+
+Both are real output, not mock-ups. The bridge runs commands through Git Bash, where Node is not on `PATH`, so keep to what that shell can do.
+
 ## Pieces
 
 - **Host bridge** (`role: host | both`): a `node:http` server with `POST /exec` and `GET|POST /ping`, every request carrying `x-pc-secret`.
