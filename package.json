@@ -1,7 +1,7 @@
 {
   "name": "dsh-pc-bridge",
-  "version": "0.2.0",
-  "description": "HTTP bridge that lets a peer machine ping and run shell commands on this host (Windows, Linux, Android/Termux), plus an optional ssh reverse-tunnel supervisor.",
+  "version": "0.3.1",
+  "description": "HTTP bridge that lets a peer machine ping and run shell commands on this host (Windows, Linux, Android/Termux): settings UI with a master switch, LAN/Tailscale access, UDP discovery, remember-once pairing, a movable secret file and local-data cleanup, plus an optional ssh reverse-tunnel supervisor.",
   "type": "module",
   "license": "MIT",
   "main": "./index.js",
@@ -10,12 +10,14 @@
   },
   "exports": {
     ".": "./index.js",
+    "./client": "./client.js",
     "./locale/*.json": "./locale/*.json",
     "./icon": "./icon.svg",
     "./package.json": "./package.json"
   },
   "files": [
     "index.js",
+    "client.js",
     "lib/",
     "bin/",
     "cordis.patch.yml",
@@ -44,6 +46,13 @@
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-settings"
+      ]
     }
   },
   "author": "QIC-9821",

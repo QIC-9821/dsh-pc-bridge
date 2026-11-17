@@ -5,7 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/node/v/dsh-pc-bridge.svg)](package.json)
 
-DeepSeek Harness 插件：在电脑上开一个**只监听回环**的小 HTTP 桥，让对端（例如云端的 QQ 机器人）能 `ping` 这台电脑、并按需执行 shell 命令；可选同时维持一条 **ssh 反向隧道**，让远端能访问到这台电脑的回环端口。
+DeepSeek Harness 插件：在电脑上开一个小 HTTP 桥，让对端（另一台电脑、平板或云端机器人）能 `ping` 这台电脑、并按需执行 shell 命令。默认只监听回环；从 0.3.0 起可以在**设置 → 电脑执行桥**里切到局域网、用 UDP 发现附近的设备、用 6 位配对码交换密钥，也可以继续用 ssh 反向隧道或 Tailscale 把桥带到远端。
 
 仓库里同时提供一个命令行 `pcctl`，不依赖 Harness 也可以在终端里直接调桥。
 
@@ -23,8 +23,11 @@ DeepSeek Harness 插件：在电脑上开一个**只监听回环**的小 HTTP �
 
 ## 组成
 
-- **Host 桥**（`role: host | both`）：`node:http` 服务，`POST /exec`、`GET|POST /ping`，每个请求都要带 `x-pc-secret` 头。
-- **工具**：Agent 可调用 `pc_ping`（探活）与 `pc_exec`（执行命令），默认打 `http://127.0.0.1:18790`。
+- **Host 桥**（`role: host | both`）：`node:http` 服务，`POST /exec`、`GET|POST /ping`，每个请求都要带 `x-pc-secret` 头；`GET /health` 与 `POST /pair` 免鉴权（后者要 6 位配对码）。
+- **运行时与设置**（`lib/runtime.mjs`、`lib/settings.mjs`）：启停、状态、工具注册、审计日志；设置写入 `$DSH_HOME/pc-bridge/settings.json`，优先级高于插件 config，重启后仍然生效。
+- **局域网发现**（`lib/discovery.mjs`）：UDP 18791 广播 `DSHBRIDGE/1`，扫描时去重并按对端身份返回 `host:port`。
+- **配对**（`lib/pairing.mjs`）：6 位数字、默认 300 秒有效、单次使用；同一 IP 连续失败 5 次锁 10 分钟。
+- **工具**：Agent 可调用 `pc_ping`（探活）与 `pc_exec`（执行命令）；`toolsMode: auto` 时只有配置了对端或开着 `remoteMode` 才常驻注册，避免每轮对话白占 token。
 - **隧道管理器**（`tunnelEnabled: true`）：守着 `ssh -N -R ...`，断了按 5/10/30/60 秒退避重连；远端 sshd 残留占用端口时先 `fuser -k` 再重试。
 - **CLI**：`pcctl ping`、`pcctl exec -- "hostname"`。
 
@@ -37,7 +40,7 @@ DeepSeek Harness 插件：在电脑上开一个**只监听回环**的小 HTTP �
 dsh plugin add dsh-pc-bridge
 
 # 直接从 GitHub tag 装
-dsh plugin add github:QIC-9821/dsh-pc-bridge#v0.1.0
+dsh plugin add github:QIC-9821/dsh-pc-bridge#v0.3.0
 
 # 本地目录（开发时）
 dsh plugin add /absolute/path/to/dsh-pc-bridge
@@ -65,9 +68,10 @@ dsh plugin add /absolute/path/to/dsh-pc-bridge
 | 键 | 默认 | 说明 |
 | --- | --- | --- |
 | `role` | `both` | `host` 只开桥；`client` 只注册工具/隧道；`both` 全开 |
-| `listenHost` | `127.0.0.1` | 监听地址，**不要改成 0.0.0.0** |
+| `listenHost` | `127.0.0.1` | 监听地址；局域网模式用 `0.0.0.0`，此时**必须**配强密钥并确认防火墙只放行可信网段 |
 | `listenPort` | `18790` | 监听端口 |
-| `secretFile` | `$DSH_HOME/pc-bridge/secret` | 密钥文件；不存在时 host 角色自动生成（32 字节 hex，权限 600） |
+| `secretFile` | `$DSH_HOME/pc-bridge/secret` | 密钥文件；可自定义（支持 `~`、绝对路径、相对 stateDir）；不存在时 host 角色自动生成（32 字节 hex，权限 600） |
+| `enabled` | `true` | 总开关；关掉后不监听、不注册工具、不跑发现，设置页仍可用 |
 | `secretEnv` | `DSH_PC_BRIDGE_SECRET` | 优先级高于密钥文件的环境变量名 |
 | `peerUrl` | `http://127.0.0.1:18790` | 工具调用哪个桥 |
 | `defaultTimeoutMs` | `30000` | 默认命令超时 |
@@ -79,6 +83,48 @@ dsh plugin add /absolute/path/to/dsh-pc-bridge
 | `sshHost` / `sshUser` | 空 | 隧道目标 |
 | `sshKeyPath` | 空 | 私钥路径；空 = 默认密钥 |
 | `tunnelRemotePort` / `tunnelLocalPort` | `18790` | 远端/本端端口（都绑 127.0.0.1） |
+| `toolsMode` | `auto` | `auto` 只有配了 `peerUrl` 或 `remoteMode` 才注册工具；`always` 常驻；`off` 不注册 |
+| `remoteMode` | `off` | `off` / `tailscale` / `ssh`；非 `off` 时工具常驻（Tailscale serve 在 0.4.0 接入） |
+| `discoveryEnabled` | `true` | 是否回应局域网 UDP 发现 |
+| `discoveryPort` | `18791` | 发现端口 |
+| `pairTtlSec` | `300` | 配对码有效期（30–3600 秒） |
+| `auditKeep` | `5` | `audit.jsonl` 超过 1 MB 时保留的历史份数 |
+| `purgeOnUninstall` | `false` | 实验性：插件被移除时尝试删除本机数据（密钥/设置/审计/日志）。依赖 DSH 在卸载时触发插件 teardown，默认关 |
+
+## 设置页（0.3.1）
+
+安装后打开 **设置 → 电脑执行桥**，里面能改的东西都会写进 `$DSH_HOME/pc-bridge/settings.json`
+（Windows 默认 `C:\Users\<你>\.dsh\pc-bridge\settings.json`），下次启动仍然生效：
+
+- 开关卡：总开关（`enabled`），拨动即生效、不用点保存。关掉后插件照常加载、设置页照常可用，但不监听端口、不注册 `pc_ping` / `pc_exec`、不跑 UDP 发现；
+- 状态卡：运行状态、监听地址、运行时长、已注册的工具、密钥来源与指纹、Tailscale 地址、对端连接、隧道、发现、最近错误；
+- 连接方式：本机（`127.0.0.1`）/ 局域网（`0.0.0.0`）/ 自定义 `peerUrl`；切模式不会清掉已配对的对端地址；
+- 附近的电脑：点「搜索」发一次 UDP 扫描，选中设备就能填进 `peerUrl`；
+- 配对：本机生成 6 位码给对端输入，或输入对端的地址 + 码，成功后双方共用同一把密钥；配对成功会记住对端名称、平台、传输方式、配对时间，被配对的设备也记进历史（最多 10 台，按地址去重），卡片上可以直接「断开配对」；
+- 工具：一个勾选框「没配对端时也注册 pc_ping / pc_exec」。不勾（默认）= 只有填了对端地址或开了远程模式才注册，平时省 token；勾上 = 总是注册（`toolsMode: always`）。要完全关掉工具用总开关；
+- 底部只有「保存并应用 / 测试连接 / 重置口令」；保存后执行桥会重启一次（毫秒级，只重启插件内的监听，**不重启 DSH**）；
+- 高级：端口、超时、输出上限、配对码有效期、审计份数、发现开关、密钥文件路径（`secretFile`）、卸载清理开关；
+- 密钥路径：改 `secretFile` 时会「写新文件 → 读回校验 → 改设置 → 重启 → 删旧文件」，保存后执行桥自动重启一次（毫秒级），不用重启软件，旧文件删不掉只给警告、不回滚；密钥来自 `secret` 配置或环境变量时拒绝迁移；
+- 删除本机数据：按钮 + 二次确认，清掉密钥文件、`settings.json`、`audit.jsonl*`、`bridge.log*`（目录保留），适合卸载前手动收拾；
+- 审计：最近 20 条 `audit.jsonl`（start / stop / restart / config / pair / exec / secret）。
+
+页面调用的是本地 API `/pc-bridge/api/*`，和 Agent 用的 `/ping`、`/exec` 是两条独立的通道。
+
+> 卸载说明：插件自己的代码由包管理删除；`$DSH_HOME/pc-bridge/` 是插件数据目录，不会随包自动删除。开启 `purgeOnUninstall` 后会尝试在 teardown 时检测 profile 是否已无本插件依赖再清理，但 DSH 没有公开的卸载钩子，这一步按「实验性」对待；稳妥做法是卸载前在设置页点一次「删除本机数据」。
+
+## 三种连接方式
+
+| 场景 | 做法 | 备注 |
+| --- | --- | --- |
+| 同一台机器 / 本机自测 | 默认 `127.0.0.1:18790` | 最省事，工具打自己 |
+| 同一 Wi-Fi / 热点 | 设置页选「局域网」，`listenHost` 变 `0.0.0.0`；对端用 `pc_exec` 的 `peer` 或设置页填 `peerUrl` | 需要防火墙放行 18790/TCP；建议用 `secret` 配强口令 |
+| 不同 Wi-Fi / 公网 | 0.4.0 走 Tailscale（`tailscale serve`）；也可以继续用本插件的 ssh 反向隧道，或对端 Cloudflare Tunnel 之类 | 0.3.0 已在状态卡显示 Tailscale 地址，配对与手动填地址现在就能用 |
+
+配对流程（两端都装 0.3.0）：
+
+1. 主机点「生成配对码」，拿到 6 位数字（300 秒、用一次）；
+2. 对端在「配对到对端」里填主机地址和码，点配对；
+3. 两端自动换成同一把密钥并重连；之后工具、`pcctl` 都能直接用。
 
 ## 对端准备（以云服务器为例）
 
@@ -100,16 +146,24 @@ PC_BRIDGE_SECRET=... pcctl exec -- "hostname; echo OK"
 
 ## 安全
 
-- 只绑回环；隧道也把两端都绑在 `127.0.0.1`，不向公网开端口。
-- 每个请求都检查共享密钥（`timingSafeEqual`），缺失/错误返回 401。
+- 默认只绑回环；隧道也把两端都绑在 `127.0.0.1`。只有你主动切到局域网（`0.0.0.0`）才对外开端口。
+- 每个 `/ping`、`/exec`、`/info` 请求都检查共享密钥（`timingSafeEqual`），缺失/错误返回 401。
+- `/pair` 免鉴权，但必须出示 6 位一次性配对码；同一 IP 连续失败 5 次锁 10 分钟，码默认 300 秒过期。
+- `/health` 只回版本、平台和能力，不泄露主机名/用户/密钥。
 - 请求体 ≤ 64 KiB、命令 ≤ 8 KiB；输出截断；超时杀进程树。
-- 密钥不进配置文件，日志只写密钥来源（`env:` / `file:`），不写值。
-- 桥提供的是**任意命令执行**能力。只把密钥给可信的对端，只在对端可信时开隧道。
+- 密钥不进配置文件，日志只写密钥来源（`env:` / `file:`），不写值；审计只记命令与退出码，不记输出。
+- 桥提供的是**任意命令执行**能力。只把密钥/配对码给可信的对端，只在对端可信时切局域网或开隧道。
 
 ## 工具
 
 - `pc_ping`：返回 `{ok, host, user, shell, now}` 或网络错误。
 - `pc_exec {"command":"...","timeoutSec":30}`：返回 `{ok, exitCode, stdout, stderr, durationMs, timedOut, truncated}`。
+- 默认 `toolsMode: auto`：本机没配 `peerUrl` 时不常驻这两个工具（每个工具 schema 每轮约占 0.3k token）；需要时在设置页切 `always`，或直接填好 `peerUrl`。
+
+## 审计
+
+`$DSH_HOME/pc-bridge/audit.jsonl` 一行一条 JSON，记录启动/停止/配置变更/配对/执行（含命令、退出码、耗时、来源 IP，不含输出）。
+文件超过 1 MB 自动轮转，保留 `auditKeep` 份；设置页只展示最后 20 条。
 
 ## 开发
 

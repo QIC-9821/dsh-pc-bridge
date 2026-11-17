@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "PC bridge (ping / exec over HTTP)",
-    "description": "Listens on loopback for ping and shell-command requests, optionally keeps an ssh reverse tunnel open. Each request carries a shared secret; tools pc_ping and pc_exec let the agent use it."
+    "description": "Listens on loopback, LAN or Tailscale for ping and shell-command requests. Settings → 电脑执行桥 has a master switch, pairing memory, a custom secret path and local-data cleanup. Tools pc_ping and pc_exec let the agent use it (optionally not registered)."
   }
 }

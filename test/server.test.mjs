@@ -97,3 +97,140 @@ test('GET /exec is not a route', async (t) => {
   const response = await fetch(`${url}/exec`, { headers })
   assert.equal(response.status, 404)
 })
+
+test('health is reachable without the shared secret', async (t) => {
+  const { url } = await startBridge(t, { version: '0.3.0' })
+  const response = await fetch(`${url}/health`)
+  assert.equal(response.status, 200)
+  const body = await response.json()
+  assert.equal(body.ok, true)
+  assert.equal(body.name, 'dsh-pc-bridge')
+  assert.equal(body.version, '0.3.0')
+  assert.equal(body.platform, process.platform)
+  assert.deepEqual([...body.capabilities].sort(), ['exec', 'pair', 'ping'])
+  assert.equal(typeof body.time, 'string')
+})
+
+test('pair hands the code to onPair and returns the shared secret', async (t) => {
+  const seen = []
+  const { url } = await startBridge(t, {
+    onPair: async (entry) => {
+      seen.push(entry)
+      if (entry.code !== '123456') throw new Error('配对码不正确')
+      return { ok: true, secret: 'paired-secret' }
+    },
+  })
+
+  const accepted = await fetch(`${url}/pair`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ code: '123456', name: 'pc', platform: 'win32' }),
+  })
+  assert.equal(accepted.status, 200)
+  const body = await accepted.json()
+  assert.equal(body.ok, true)
+  assert.equal(body.secret, 'paired-secret')
+  assert.equal(typeof body.host, 'string')
+  assert.ok(body.port > 0)
+  assert.equal(seen.length, 1)
+  assert.equal(seen[0].code, '123456')
+  assert.equal(seen[0].name, 'pc')
+  assert.match(seen[0].ip, /127\.0\.0\.1/)
+
+  const rejected = await fetch(`${url}/pair`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ code: '000000' }),
+  })
+  assert.equal(rejected.status, 401)
+  assert.equal((await rejected.json()).ok, false)
+})
+
+test('pair requires a code, a hook and a small valid json body', async (t) => {
+  const { url } = await startBridge(t)
+
+  const noHook = await fetch(`${url}/pair`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ code: '123456' }),
+  })
+  assert.equal(noHook.status, 401)
+
+  const missing = await fetch(`${url}/pair`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: '{}',
+  })
+  assert.equal(missing.status, 400)
+
+  const invalid = await fetch(`${url}/pair`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: 'not json',
+  })
+  assert.equal(invalid.status, 400)
+
+  const huge = await fetch(`${url}/pair`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ code: 'a'.repeat(5000) }),
+  })
+  assert.equal(huge.status, 413)
+})
+
+test('info requires the shared secret and reports limits', async (t) => {
+  const { url } = await startBridge(t, { version: '0.3.0', maxOutputBytes: 1024 * 1024 })
+
+  const denied = await fetch(`${url}/info`)
+  assert.equal(denied.status, 401)
+
+  const response = await fetch(`${url}/info`, { headers })
+  assert.equal(response.status, 200)
+  const body = await response.json()
+  assert.equal(body.ok, true)
+  assert.equal(body.version, '0.3.0')
+  assert.equal(body.platform, process.platform)
+  assert.equal(body.pid, process.pid)
+  assert.equal(typeof body.host, 'string')
+  assert.equal(typeof body.user, 'string')
+  assert.equal(typeof body.cwd, 'string')
+  assert.equal(typeof body.shell, 'string')
+  assert.deepEqual(body.limits, {
+    defaultTimeoutMs: 30000,
+    maxTimeoutMs: 600000,
+    maxOutputBytes: 1024 * 1024,
+  })
+  assert.equal(typeof body.now, 'string')
+})
+
+test('exec reports an audit entry through onExec', async (t) => {
+  const audits = []
+  const { url } = await startBridge(t, { onExec: (entry) => audits.push(entry) })
+
+  const response = await fetch(`${url}/exec`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ cmd: 'echo hi' }),
+  })
+  assert.equal(response.status, 200)
+  assert.equal(audits.length, 1)
+  assert.equal(audits[0].command, 'echo hi')
+  assert.match(audits[0].ip, /127\.0\.0\.1/)
+  assert.equal(audits[0].result.stdout, 'ran:echo hi')
+  assert.equal(typeof audits[0].ms, 'number')
+})
+
+test('a throwing onExec does not break exec', async (t) => {
+  const { url } = await startBridge(t, {
+    onExec: () => {
+      throw new Error('audit is down')
+    },
+  })
+  const response = await fetch(`${url}/exec`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ cmd: 'echo hi' }),
+  })
+  assert.equal(response.status, 200)
+  assert.equal((await response.json()).stdout, 'ran:echo hi')
+})

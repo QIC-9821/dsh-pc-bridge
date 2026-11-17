@@ -1,14 +1,34 @@
+import { readFileSync } from 'node:fs'
+import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
-import { normalizeConfig } from './lib/config.mjs'
-import { createBridgeServer } from './lib/server.mjs'
-import { resolveSecret } from './lib/secret.mjs'
-import { resolveShell } from './lib/shell.mjs'
-import { createLogger, ensureDir, rotateLog } from './lib/state.mjs'
-import { pcToolSpecs } from './lib/tool.mjs'
-import { createTunnelSupervisor } from './lib/tunnel.mjs'
+import { createRoutes } from './lib/routes.mjs'
+import { createBridgeRuntime } from './lib/runtime.mjs'
 
 export const name = 'dsh-pc-bridge'
+
+// A profile that no longer depends on this package has uninstalled it; only
+// then may purgeOnUninstall actually remove the local secret and history.
+async function profileDroppedPlugin(env = process.env) {
+  const dir = String(env?.DSH_PROFILE_DIR || '').trim()
+  if (!dir) return false
+  try {
+    const pkg = JSON.parse(await readFile(join(dir, 'package.json'), 'utf8'))
+    const groups = [pkg?.dependencies, pkg?.devDependencies, pkg?.optionalDependencies]
+    return groups.every((group) => !group || typeof group !== 'object' || !('dsh-pc-bridge' in group))
+  } catch {
+    // An unreadable profile is not proof of removal: keep the data.
+    return false
+  }
+}
+
+const VERSION = (() => {
+  try {
+    return String(JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')).version || '')
+  } catch {
+    return ''
+  }
+})()
 
 let z = null
 try {
@@ -40,77 +60,45 @@ export const Config = z
       sshKeyPath: field(z.string().default('')),
       tunnelRemotePort: field(z.natural().default(18790)),
       tunnelLocalPort: field(z.natural().default(18790)),
+      toolsMode: field(z.string().default('auto')),
+      discoveryEnabled: field(z.boolean().default(true)),
+      discoveryPort: field(z.natural().default(18791)),
+      pairTtlSec: field(z.natural().default(300)),
+      auditKeep: field(z.natural().default(5)),
+      remoteMode: field(z.string().default('off')),
+      enabled: field(z.boolean().default(true)),
+      purgeOnUninstall: field(z.boolean().default(false)),
     })
   : undefined
 
 export const inject = ['tools']
 
 export async function apply(ctx, config = {}) {
-  const cfg = normalizeConfig(config, process.env)
-  await ensureDir(cfg.stateDir).catch(() => {})
-  await rotateLog(join(cfg.stateDir, 'bridge.log')).catch(() => {})
+  const runtime = createBridgeRuntime({ ctx, config, env: process.env, version: VERSION })
+  await runtime.start()
 
-  const logger = createLogger({ dir: cfg.stateDir, tag: 'pc-bridge' })
+  const disposers = []
 
-  const resolved = cfg.secret
-    ? { secret: cfg.secret, source: 'config' }
-    : await resolveSecret({
-        envName: cfg.secretEnv,
-        secretFile: cfg.secretFile,
-        stateDir: cfg.stateDir,
-        create: cfg.role !== 'client',
-        logger,
-      })
-  const { secret, source } = resolved
-  if (!secret) logger.warn(`no bridge secret (${source}); pc tools will refuse to run commands`)
-
-  const shell = resolveShell({ shellPath: cfg.shellPath })
-  logger.info(`ready: role=${cfg.role} secret=${source} shell=${shell.exe} (${shell.kind})`)
-
-  let server = null
-  if (cfg.role !== 'client') {
-    server = createBridgeServer({
-      secret,
-      shell,
-      listenHost: cfg.listenHost,
-      listenPort: cfg.listenPort,
-      defaultTimeoutMs: cfg.defaultTimeoutMs,
-      maxTimeoutMs: cfg.maxTimeoutMs,
-      maxOutputBytes: cfg.maxOutputBytes,
-      cwd: cfg.cwd,
-      logger,
-    })
+  const mountRoutes = (hostCtx) => {
+    const webServer = hostCtx?.webServer ?? hostCtx?.get?.('webServer')
+    if (!webServer || typeof webServer.register !== 'function') return
     try {
-      const address = await server.start()
-      logger.info(`listening on http://${cfg.listenHost}:${address.port}`)
+      const routes = createRoutes({ runtime, version: VERSION })
+      disposers.push(webServer.register({ kind: 'prefix', path: '/pc-bridge', handler: routes.handle }))
     } catch (error) {
-      logger.error(`listen failed (port in use?): ${error?.message || error}`)
-      server = null
+      console.warn(`[pc-bridge] web route registration failed: ${error?.message || error}`)
     }
   }
 
-  const tunnel = cfg.tunnelEnabled ? createTunnelSupervisor({ cfg, logger }) : null
-  tunnel?.start()
-
-  const baseUrl = cfg.peerUrl || `http://127.0.0.1:${cfg.listenPort}`
-  const disposers = []
-  if (typeof ctx?.tools?.register === 'function') {
-    for (const spec of pcToolSpecs({
-      baseUrl,
-      secret,
-      defaultTimeoutMs: cfg.defaultTimeoutMs,
-      maxTimeoutMs: cfg.maxTimeoutMs,
-    })) {
-      try {
-        disposers.push(ctx.tools.register(spec))
-      } catch (error) {
-        logger.warn(`tool ${spec.name} registration failed: ${error?.message || error}`)
-      }
-    }
+  // The web server may be instantiated on a later bundle row, so acquire it
+  // lazily instead of reading ctx.webServer at apply time.
+  if (typeof ctx?.inject === 'function') {
+    disposers.push(ctx.inject(['webServer'], mountRoutes))
+  } else {
+    mountRoutes(ctx)
   }
 
   const dispose = async () => {
-    tunnel?.stop()
     for (const disposer of disposers.reverse()) {
       try {
         disposer?.()
@@ -118,7 +106,16 @@ export async function apply(ctx, config = {}) {
         // teardown must not throw
       }
     }
-    if (server) await server.close().catch(() => {})
+    await runtime.stop()
+    if (typeof runtime.isPurgeOnUninstall === 'function' && runtime.isPurgeOnUninstall()) {
+      if (await profileDroppedPlugin(process.env)) {
+        try {
+          await runtime.cleanup()
+        } catch (error) {
+          console.warn(`[pc-bridge] cleanup on uninstall failed: ${error?.message || error}`)
+        }
+      }
+    }
   }
 
   ctx.effect?.(() => () => dispose(), 'dsh-pc-bridge: teardown')
