@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "电脑执行桥",
-    "description": "在本机、局域网或 Tailscale 上监听 ping 与命令执行请求；在 设置 → 电脑执行桥 里一键启停、配对并记住对端、自定义密钥路径、清理本机数据，Agent 通过 pc_ping / pc_exec 调用（可配置为不常驻工具）。"
+    "description": "在本机、局域网或远程（Tailscale）上监听 ping 与命令执行请求；设置页可一键启停、配对并记住对端、自定义密钥路径、清理本机数据，并自动让 WARP 与 Tailscale 共存（WARP 只做 DNS）。Agent 通过 pc_ping / pc_exec 调用（可配置为不常驻工具）。"
   }
 }

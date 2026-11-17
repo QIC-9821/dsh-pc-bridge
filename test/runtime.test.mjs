@@ -2,18 +2,49 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { appendFile, mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
 import { createServer } from 'node:http'
-import { tmpdir } from 'node:os'
+import { networkInterfaces, tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { createBridgeRuntime, describeTransport } from '../lib/runtime.mjs'
 
-async function withRuntime(t, { overrides = {}, ctx } = {}) {
+const OFFLINE_TAILSCALE = Object.freeze({
+  supported: true, installed: true, backendState: 'Stopped', online: false,
+  ipv4: '', dnsName: '', hostName: '', peers: 0, magicDns: '',
+})
+
+const IDLE_WARP = Object.freeze({
+  supported: true, installed: false, cli: '', state: 'unknown', mode: '', tunnel: false,
+})
+
+function localIPv4() {
+  for (const entries of Object.values(networkInterfaces())) {
+    for (const entry of entries || []) {
+      if (entry.family === 'IPv4' && !entry.internal) return entry.address
+    }
+  }
+  return ''
+}
+
+function fakeClients({ tailscale = OFFLINE_TAILSCALE, warp = IDLE_WARP } = {}) {
+  let warpState = { ...warp }
+  return {
+    tailscale: () => ({ getStatus: async () => ({ ...tailscale }) }),
+    warp: () => ({
+      getStatus: async () => ({ ...warpState }),
+      ensureCoexist: async () => ({ ...warpState, changed: false }),
+      restoreTunnel: async () => ({ ...warpState, changed: false }),
+    }),
+  }
+}
+
+async function withRuntime(t, { overrides = {}, ctx, clients } = {}) {
   const home = await mkdtemp(join(tmpdir(), 'pc-bridge-rt-'))
   const runtime = createBridgeRuntime({
     ctx,
     env: { DSH_HOME: home },
     version: '0.3.0-test',
     config: { listenPort: 0, discoveryEnabled: false, ...overrides },
+    clients: { ...fakeClients(), ...clients },
   })
   t.after(async () => {
     await runtime.stop().catch(() => {})
@@ -385,4 +416,89 @@ test('cleanup deletes the secret, settings, audit and log but keeps the director
   assert.deepEqual(result.failed, [])
   assert.deepEqual(await readdir(dir), [])
   assert.deepEqual(await runtime.auditTail(5), [])
+})
+
+test('remoteMode tailscale binds the tailnet address when Tailscale is online', async (t) => {
+  // Use a real local address in place of the tailnet one: resolveBindHost is
+  // only allowed to pick an address this machine actually owns.
+  const tailnetIp = localIPv4()
+  const online = { ...OFFLINE_TAILSCALE, online: true, ipv4: tailnetIp, backendState: 'Running' }
+  const { runtime } = await withRuntime(t, {
+    overrides: { remoteMode: 'tailscale', listenHost: '127.0.0.1', toolsMode: 'off' },
+    clients: fakeClients({ tailscale: online }),
+  })
+  const status = await runtime.start()
+  assert.equal(status.listen.configuredHost, '127.0.0.1')
+  assert.equal(status.remote.mode, 'tailscale')
+  if (tailnetIp) {
+    assert.equal(status.listen.host, tailnetIp)
+    assert.equal(status.listen.widened, false)
+    assert.equal(status.remote.url, `http://${tailnetIp}:${status.listen.port}`)
+  } else {
+    assert.equal(status.listen.host, '0.0.0.0')
+    assert.equal(status.listen.widened, true)
+  }
+  assert.equal(runtime.publicConfig().warpCoexist, true)
+  await runtime.stop()
+})
+
+test('remoteMode tailscale falls back to 0.0.0.0 when Tailscale is offline', async (t) => {
+  const { runtime } = await withRuntime(t, {
+    overrides: { remoteMode: 'tailscale', listenHost: '127.0.0.1', toolsMode: 'off' },
+  })
+  const status = await runtime.start()
+  assert.equal(status.listen.host, '0.0.0.0')
+  assert.equal(status.listen.widened, true)
+  assert.equal(status.remote.url, '')
+  await runtime.stop()
+})
+
+test('local mode keeps listening on loopback', async (t) => {
+  const { runtime } = await withRuntime(t, { overrides: { toolsMode: 'off' } })
+  const status = await runtime.start()
+  assert.equal(status.listen.host, '127.0.0.1')
+  assert.equal(status.remote.mode, 'off')
+  assert.equal(status.remote.url, '')
+  await runtime.stop()
+})
+
+test('a WARP failure keeps installed=true and surfaces as an error', async (t) => {
+  const failing = {
+    warp: () => ({
+      getStatus: async () => ({ supported: true, installed: true, state: 'connected', mode: 'warp', tunnel: true }),
+      ensureCoexist: async () => {
+        throw new Error('Switch Locked')
+      },
+      restoreTunnel: async () => {
+        throw new Error('Switch Locked')
+      },
+    }),
+  }
+  const { runtime } = await withRuntime(t, { overrides: { toolsMode: 'off' }, clients: failing })
+  await runtime.start()
+  await assert.rejects(runtime.warpAction('dns-only'), /Switch Locked/)
+  const status = runtime.status()
+  assert.equal(status.warp.installed, true)
+  assert.match(status.warp.error, /Switch Locked/)
+  await runtime.stop()
+})
+
+test('stopping clears the pending network check', async (t) => {
+  let probes = 0
+  const counting = {
+    warp: () => ({
+      getStatus: async () => {
+        probes += 1
+        return { ...IDLE_WARP }
+      },
+      ensureCoexist: async () => ({ ...IDLE_WARP, changed: false }),
+      restoreTunnel: async () => ({ ...IDLE_WARP, changed: false }),
+    }),
+  }
+  const { runtime } = await withRuntime(t, { overrides: { toolsMode: 'off' }, clients: counting })
+  await runtime.start()
+  await runtime.stop()
+  const afterStop = probes
+  await new Promise((resolve) => setTimeout(resolve, 900))
+  assert.equal(probes, afterStop)
 })

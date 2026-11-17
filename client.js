@@ -137,6 +137,15 @@ window.__ModuleLoader__.load({
       return { running: '运行中', stopped: '已停止', error: '出错', disabled: '已关闭' }[value] || value || '未知'
     }
 
+    function warpLabel(value) {
+      return {
+        connected: '已连接',
+        connecting: '连接中',
+        disconnected: '未连接',
+        unknown: '状态未知',
+      }[value] || value || '状态未知'
+    }
+
     function clock(value) {
       if (!value) return '—'
       try {
@@ -233,7 +242,11 @@ window.__ModuleLoader__.load({
       const pairedUrl = value('peerUrl') || peer.url || ''
       const pairedAt = value('peerPairedAt') || peer.pairedAt || ''
 
-      const derivedMode = String(value('listenHost') || '') === '0.0.0.0' ? 'lan' : 'local'
+      const derivedMode = String(value('remoteMode') || '') === 'tailscale'
+        ? 'remote'
+        : String(value('listenHost') || '') === '0.0.0.0'
+          ? 'lan'
+          : 'local'
       const currentMode = mode || derivedMode
 
       const tailscale = addresses.find((item) => String(item?.iface || '').toLowerCase().includes('tailscale'))
@@ -265,8 +278,13 @@ window.__ModuleLoader__.load({
         setMode(next)
         if (next === 'local') {
           set('listenHost', '127.0.0.1')
+          set('remoteMode', 'off')
         } else if (next === 'lan') {
           set('listenHost', '0.0.0.0')
+          set('remoteMode', 'off')
+        } else if (next === 'remote') {
+          set('remoteMode', 'tailscale')
+          if (String(value('listenHost') || '') === '127.0.0.1') set('listenHost', '0.0.0.0')
         }
       }
 
@@ -348,6 +366,23 @@ window.__ModuleLoader__.load({
             config: updated.config || current?.config,
           }))
           setNote(next ? '已开启，执行桥开始监听。' : '已关闭，执行桥停止监听。')
+        })
+      }
+
+      async function warpAction(action) {
+        await run(`warp-${action}`, async () => {
+          const next = await post('warp', { action })
+          setData((current) => ({
+            ...(current || {}),
+            status: next.status || current?.status,
+          }))
+          if (action === 'dns-only') {
+            setNote('WARP 已切到「仅 DNS」模式：DNS 保护还在，不再和 Tailscale 抢路由。')
+          } else if (action === 'tunnel') {
+            setNote('WARP 已恢复隧道模式；如果 Tailscale 掉线，把远程连接切回本机或局域网。')
+          } else {
+            setNote('已刷新 WARP 状态。')
+          }
         })
       }
 
@@ -557,6 +592,70 @@ window.__ModuleLoader__.load({
         ]),
       ])
 
+      const tailscaleInfo = status.tailscale || {}
+      const warpInfo = status.warp || {}
+      const remoteInfo = status.remote || {}
+      const remoteUrlLive = String(remoteInfo.url || '').trim()
+
+      const networkCard = h(Card, { key: 'network', title: '远程连接（Tailscale）与 WARP' }, [
+        h('div', { key: 'ts', style: ROW }, [
+          h('span', { key: 'k' }, 'Tailscale'),
+          h('span', { key: 'v', style: { textAlign: 'right' } }, tailscaleInfo.installed
+            ? `${tailscaleInfo.online ? '在线' : '离线'}${tailscaleInfo.ipv4 ? ` · ${tailscaleInfo.ipv4}` : ''}${tailscaleInfo.peers ? ` · ${tailscaleInfo.peers} 台设备` : ''}`
+            : '未安装或未登录'),
+        ]),
+        tailscaleInfo.dnsName
+          ? h('div', { key: 'dns', style: ROW }, [
+              h('span', { key: 'k' }, 'Tailscale 域名'),
+              h('span', { key: 'v', style: { wordBreak: 'break-all', textAlign: 'right' } }, tailscaleInfo.dnsName),
+            ])
+          : null,
+        h('div', { key: 'remote', style: ROW }, [
+          h('span', { key: 'k' }, '远程地址'),
+          h('span', { key: 'v', style: { display: 'inline-flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' } }, remoteUrlLive
+            ? [
+                h('span', { key: 'u' }, remoteUrlLive),
+                h('button', {
+                  key: 'c',
+                  style: { ...BUTTON, padding: '2px 8px', fontSize: 11.5 },
+                  onClick: () => void copy(remoteUrlLive),
+                }, '复制'),
+              ]
+            : '—'),
+        ]),
+        h('div', { key: 'warp', style: ROW }, [
+          h('span', { key: 'k' }, 'WARP'),
+          h('span', { key: 'v', style: { textAlign: 'right' } }, warpInfo.installed
+            ? `${warpLabel(warpInfo.state)} · ${warpInfo.mode || '未知模式'}${warpInfo.tunnel ? '（隧道）' : ''}`
+            : (warpInfo.supported === false ? '未安装' : '未检测')),
+        ]),
+        h('div', { key: 'buttons', style: { display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 } }, [
+          h('button', {
+            key: 'dns',
+            style: BUTTON,
+            disabled: Boolean(busy) || !warpInfo.installed,
+            onClick: () => void warpAction('dns-only'),
+          }, busy === 'warp-dns-only' ? '切换中…' : 'WARP 只做 DNS（共存）'),
+          h('button', {
+            key: 'tunnel',
+            style: BUTTON,
+            disabled: Boolean(busy) || !warpInfo.installed,
+            onClick: () => void warpAction('tunnel'),
+          }, busy === 'warp-tunnel' ? '恢复中…' : '恢复 WARP 隧道'),
+          h('button', { key: 'refresh', style: BUTTON, disabled: Boolean(busy), onClick: () => void warpAction('status') }, '刷新网络状态'),
+        ]),
+        h(Check, {
+          key: 'coexist',
+          checked: value('warpCoexist') !== false,
+          label: '远程模式启动时自动让 WARP 只做 DNS',
+          help: '勾选后，只要连接方式选「远程（Tailscale）」，执行桥启动时会检查 WARP；发现它开着隧道就切到「仅 DNS」，让 Tailscale 保持在线。不勾就完全不动 WARP。',
+          onChange: (next) => set('warpCoexist', next),
+        }),
+        remoteInfo.mode !== 'tailscale'
+          ? h('div', { key: 'hint', style: { ...MUTED, marginTop: 6 } }, '要异地直连，请把下面的「连接方式」切到「远程（Tailscale）」并保存。')
+          : h('div', { key: 'hint', style: { ...MUTED, marginTop: 6 } }, '平板/手机打开上面的远程地址即可访问；打不开的话，在 Windows 防火墙放行该端口（只对 Tailscale 接口开放更安全）。'),
+      ])
+
       const modeCard = h(Card, { key: 'mode', title: '连接方式' }, [
         h(Choice, {
           key: 'local',
@@ -577,7 +676,15 @@ window.__ModuleLoader__.load({
           onChange: pickMode,
         }),
         h(Choice, {
-          key: 'custom',
+          key: 'remote',
+          name: 'pc-bridge-mode',
+          value: 'remote',
+          checked: currentMode === 'remote',
+          label: '远程（Tailscale）',
+          desc: '不在同一个 Wi-Fi 也能连：监听所有网卡，本页会显示 tailnet 地址；两端登录同一个 tailnet 即可。开启后工具也会注册。',
+          onChange: pickMode,
+        }),
+        h(Choice, {
           name: 'pc-bridge-mode',
           value: 'custom',
           checked: currentMode === 'custom',
@@ -849,6 +956,7 @@ window.__ModuleLoader__.load({
         enabledCard,
         statusCard,
         addressCard,
+        networkCard,
         modeCard,
         discoverCard,
         pairCard,

@@ -5,7 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/node/v/dsh-pc-bridge.svg)](package.json)
 
-DeepSeek Harness 插件：在电脑上开一个小 HTTP 桥，让对端（另一台电脑、平板或云端机器人）能 `ping` 这台电脑、并按需执行 shell 命令。默认只监听回环；从 0.3.0 起可以在**设置 → 电脑执行桥**里切到局域网、用 UDP 发现附近的设备、用 6 位配对码交换密钥，也可以继续用 ssh 反向隧道或 Tailscale 把桥带到远端。
+DeepSeek Harness 插件：在电脑上开一个小 HTTP 桥，让对端（另一台电脑、平板或云端机器人）能 `ping` 这台电脑、并按需执行 shell 命令。默认只监听回环；从 0.3.0 起可以在**设置 → 电脑执行桥**里切到局域网、用 UDP 发现附近的设备、用 6 位配对码交换密钥；0.4.0 起可以直接选「远程（Tailscale）」异地直连，并自动把 WARP 切成「仅 DNS」以免和 Tailscale 打架。也可以继续用 ssh 反向隧道。
 
 仓库里同时提供一个命令行 `pcctl`，不依赖 Harness 也可以在终端里直接调桥。
 
@@ -28,6 +28,7 @@ DeepSeek Harness 插件：在电脑上开一个小 HTTP 桥，让对端（另一
 - **局域网发现**（`lib/discovery.mjs`）：UDP 18791 广播 `DSHBRIDGE/1`，扫描时去重并按对端身份返回 `host:port`。
 - **配对**（`lib/pairing.mjs`）：6 位数字、默认 300 秒有效、单次使用；同一 IP 连续失败 5 次锁 10 分钟。
 - **工具**：Agent 可调用 `pc_ping`（探活）与 `pc_exec`（执行命令）；`toolsMode: auto` 时只有配置了对端或开着 `remoteMode` 才常驻注册，避免每轮对话白占 token。
+- **远程网络**（`lib/tailscale.mjs`、`lib/warp.mjs`，0.4.0）：读 `tailscale status --json` 拿到 tailnet 地址并在设置页显示远程 URL；开启 `warpCoexist` 时若 WARP 正在跑隧道，就自动切到「仅 DNS」（`warp-cli mode doh`），让 Tailscale 的控制连接恢复。
 - **隧道管理器**（`tunnelEnabled: true`）：守着 `ssh -N -R ...`，断了按 5/10/30/60 秒退避重连；远端 sshd 残留占用端口时先 `fuser -k` 再重试。
 - **CLI**：`pcctl ping`、`pcctl exec -- "hostname"`。
 
@@ -40,7 +41,7 @@ DeepSeek Harness 插件：在电脑上开一个小 HTTP 桥，让对端（另一
 dsh plugin add dsh-pc-bridge
 
 # 直接从 GitHub tag 装
-dsh plugin add github:QIC-9821/dsh-pc-bridge#v0.3.0
+dsh plugin add github:QIC-9821/dsh-pc-bridge#v0.4.0
 
 # 本地目录（开发时）
 dsh plugin add /absolute/path/to/dsh-pc-bridge
@@ -84,21 +85,23 @@ dsh plugin add /absolute/path/to/dsh-pc-bridge
 | `sshKeyPath` | 空 | 私钥路径；空 = 默认密钥 |
 | `tunnelRemotePort` / `tunnelLocalPort` | `18790` | 远端/本端端口（都绑 127.0.0.1） |
 | `toolsMode` | `auto` | `auto` 只有配了 `peerUrl` 或 `remoteMode` 才注册工具；`always` 常驻；`off` 不注册 |
-| `remoteMode` | `off` | `off` / `tailscale` / `ssh`；非 `off` 时工具常驻（Tailscale serve 在 0.4.0 接入） |
+| `remoteMode` | `off` | `off` / `tailscale` / `ssh`。选 `tailscale` 时优先绑 tailnet 地址（Tailscale 不在线才退回 `0.0.0.0`），设置页显示 tailnet 远程地址；非 `off` 时工具常驻 |
+| `warpCoexist` | `true` | `remoteMode: tailscale` 时，启动时若发现 WARP 在隧道模式就自动切到「仅 DNS」（`warp-cli mode doh`），让 Tailscale 保持在线；设 `false` 则完全不动 WARP |
 | `discoveryEnabled` | `true` | 是否回应局域网 UDP 发现 |
 | `discoveryPort` | `18791` | 发现端口 |
 | `pairTtlSec` | `300` | 配对码有效期（30–3600 秒） |
 | `auditKeep` | `5` | `audit.jsonl` 超过 1 MB 时保留的历史份数 |
 | `purgeOnUninstall` | `false` | 实验性：插件被移除时尝试删除本机数据（密钥/设置/审计/日志）。依赖 DSH 在卸载时触发插件 teardown，默认关 |
 
-## 设置页（0.3.1）
+## 设置页（0.4.0）
 
 安装后打开 **设置 → 电脑执行桥**，里面能改的东西都会写进 `$DSH_HOME/pc-bridge/settings.json`
 （Windows 默认 `C:\Users\<你>\.dsh\pc-bridge\settings.json`），下次启动仍然生效：
 
 - 开关卡：总开关（`enabled`），拨动即生效、不用点保存。关掉后插件照常加载、设置页照常可用，但不监听端口、不注册 `pc_ping` / `pc_exec`、不跑 UDP 发现；
 - 状态卡：运行状态、监听地址、运行时长、已注册的工具、密钥来源与指纹、Tailscale 地址、对端连接、隧道、发现、最近错误；
-- 连接方式：本机（`127.0.0.1`）/ 局域网（`0.0.0.0`）/ 自定义 `peerUrl`；切模式不会清掉已配对的对端地址；
+- 远程连接（Tailscale）与 WARP：显示 Tailscale 是否在线、tailnet 地址、可复制的远程 URL；提供「WARP 只做 DNS（共存）」「恢复 WARP 隧道」「刷新网络状态」三个按钮，以及「远程模式启动时自动让 WARP 只做 DNS」勾选框（`warpCoexist`）；
+- 连接方式：本机（`127.0.0.1`）/ 局域网（`0.0.0.0`）/ 远程（Tailscale，优先绑 tailnet 地址，Tailscale 不在线时退回 `0.0.0.0`）/ 自定义 `peerUrl`；切模式不会清掉已配对的对端地址；
 - 附近的电脑：点「搜索」发一次 UDP 扫描，选中设备就能填进 `peerUrl`；
 - 配对：本机生成 6 位码给对端输入，或输入对端的地址 + 码，成功后双方共用同一把密钥；配对成功会记住对端名称、平台、传输方式、配对时间，被配对的设备也记进历史（最多 10 台，按地址去重），卡片上可以直接「断开配对」；
 - 工具：一个勾选框「没配对端时也注册 pc_ping / pc_exec」。不勾（默认）= 只有填了对端地址或开了远程模式才注册，平时省 token；勾上 = 总是注册（`toolsMode: always`）。要完全关掉工具用总开关；
@@ -118,13 +121,29 @@ dsh plugin add /absolute/path/to/dsh-pc-bridge
 | --- | --- | --- |
 | 同一台机器 / 本机自测 | 默认 `127.0.0.1:18790` | 最省事，工具打自己 |
 | 同一 Wi-Fi / 热点 | 设置页选「局域网」，`listenHost` 变 `0.0.0.0`；对端用 `pc_exec` 的 `peer` 或设置页填 `peerUrl` | 需要防火墙放行 18790/TCP；建议用 `secret` 配强口令 |
-| 不同 Wi-Fi / 公网 | 0.4.0 走 Tailscale（`tailscale serve`）；也可以继续用本插件的 ssh 反向隧道，或对端 Cloudflare Tunnel 之类 | 0.3.0 已在状态卡显示 Tailscale 地址，配对与手动填地址现在就能用 |
+| 不同 Wi-Fi / 热点（Tailscale） | 两端装 Tailscale 并登录同一账号；设置页选「远程（Tailscale）」保存，页面会给出 `http://<tailnet-IP>:18790` | 需要在防火墙放行 18790（见下）；装了 WARP 时勾 `warpCoexist` |
+| 公网 / 没有 Tailscale | 继续用本插件的 ssh 反向隧道（`tunnelEnabled`），或对端用 Cloudflare Tunnel 之类 | 桥本身不直接监听公网 |
 
-配对流程（两端都装 0.3.0）：
+配对流程（两端都装 0.4.0）：
 
 1. 主机点「生成配对码」，拿到 6 位数字（300 秒、用一次）；
 2. 对端在「配对到对端」里填主机地址和码，点配对；
 3. 两端自动换成同一把密钥并重连；之后工具、`pcctl` 都能直接用。
+
+### 远程连接（Tailscale）怎么开
+
+1. 两端都装好 Tailscale，登录同一个 tailnet（`tailscale status` 里两端都是 online）；
+2. 主机设置页把「连接方式」切到「远程（Tailscale）」，点「保存并应用」；执行桥会优先绑 tailnet 地址（Tailscale 不在线时退回 `0.0.0.0`），状态卡/远程卡显示该地址；
+3. 在主机防火墙只对 tailnet 放行端口（管理员 PowerShell）：
+
+```powershell
+New-NetFirewallRule -DisplayName "dsh-pc-bridge (Tailscale)" -Direction Inbound `
+  -Action Allow -Protocol TCP -LocalPort 18790 -RemoteAddress 100.64.0.0/10
+```
+
+4. 对端（平板/手机/另一台电脑）打开 `http://<tailnet-IP>:18790/health`，看到 `{"ok":true,...}` 就通了；之后把它们配对上，或者直接在设置里填 `peerUrl`。
+
+**WARP 注意**：WARP 的隧道会把 Tailscale 的控制连接（controlplane/DERP）一起吞掉，表现为电脑在 tailnet 里一直 offline。消费版 WARP 默认排除了 `100.64.0.0/10`，但对端地址通了、控制面仍然断。0.4.0 的 `warpCoexist`（默认开）会在「远程（Tailscale）」模式启动时把 WARP 切到「仅 DNS」（`warp-cli mode doh`）：DNS 保护保留、隧道关掉，Tailscale 恢复正常。设置页也可以随时手动点「WARP 只做 DNS（共存）」或「恢复 WARP 隧道」。
 
 ## 对端准备（以云服务器为例）
 
@@ -146,7 +165,7 @@ PC_BRIDGE_SECRET=... pcctl exec -- "hostname; echo OK"
 
 ## 安全
 
-- 默认只绑回环；隧道也把两端都绑在 `127.0.0.1`。只有你主动切到局域网（`0.0.0.0`）才对外开端口。
+- 默认只绑回环；隧道也把两端都绑在 `127.0.0.1`。只有你主动切到局域网（`0.0.0.0`）或远程（Tailscale）才对外开端口。
 - 每个 `/ping`、`/exec`、`/info` 请求都检查共享密钥（`timingSafeEqual`），缺失/错误返回 401。
 - `/pair` 免鉴权，但必须出示 6 位一次性配对码；同一 IP 连续失败 5 次锁 10 分钟，码默认 300 秒过期。
 - `/health` 只回版本、平台和能力，不泄露主机名/用户/密钥。

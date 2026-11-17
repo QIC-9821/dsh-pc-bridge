@@ -4,7 +4,7 @@ import { createServer } from 'node:http'
 
 import { createRoutes } from '../lib/routes.mjs'
 
-const VERSION = '0.3.1-test'
+const VERSION = '0.4.0-test'
 const AUDIT = [{ kind: 'exec', at: '2026-01-01T00:00:00.000Z', command: 'hostname' }]
 
 function makeStatus(overrides = {}) {
@@ -24,6 +24,10 @@ function makeStatus(overrides = {}) {
     shell: { exe: '/bin/bash', kind: 'bash' },
     discovery: { enabled: true, port: 18791, running: true },
     tunnel: { enabled: false, running: false },
+    remote: { mode: 'off', url: '' },
+    warp: { supported: true, installed: true, state: 'disconnected', mode: 'warp', tunnel: false, changed: false, previousMode: '', error: '' },
+    tailscale: { supported: true, installed: true, backendState: 'Running', online: true, ipv4: '100.100.1.2', dnsName: 'host.tailnet.ts.net', peers: 1, error: '' },
+    networkCheckedAt: '2026-01-01T00:00:00.000Z',
     lastError: '',
     ...overrides,
   }
@@ -102,6 +106,19 @@ function makeRuntime(overrides = {}) {
     async rotateSecret() {
       calls.push({ op: 'rotateSecret' })
       if (overrides.rotateError) throw overrides.rotateError
+    },
+    async warpAction(action) {
+      calls.push({ op: 'warpAction', action })
+      if (overrides.warpActionError) throw overrides.warpActionError
+      if (!['dns-only', 'tunnel', 'status'].includes(action)) {
+        const error = new Error('action 只能是 dns-only、tunnel 或 status')
+        error.statusCode = 400
+        throw error
+      }
+      return {
+        warp: makeStatus().warp,
+        status: makeStatus(),
+      }
     },
   }
   return { runtime, calls }
@@ -513,4 +530,44 @@ test('a trailing service prefix path is stripped exactly once', async (t) => {
 
   assert.equal(response.status, 200)
   assert.ok(calls.some((call) => call.op === 'auditTail'))
+})
+
+test('GET api/warp reports warp, tailscale and remote mode', async (t) => {
+  const { base, calls } = await startRoutes(t, {
+    status: { remote: { mode: 'tailscale', url: 'http://100.100.1.2:18790' } },
+  })
+
+  const { response, body } = await getJson(`${base}/api/warp`)
+
+  assert.equal(response.status, 200)
+  assert.equal(body.ok, true)
+  assert.equal(body.remote.mode, 'tailscale')
+  assert.equal(body.remote.url, 'http://100.100.1.2:18790')
+  assert.equal(body.warp.installed, true)
+  assert.equal(body.tailscale.online, true)
+  assert.ok(calls.some((call) => call.op === 'status'))
+})
+
+test('POST api/warp runs the requested action', async (t) => {
+  const { base, calls } = await startRoutes(t)
+
+  const { response, body } = await getJson(`${base}/api/warp`, postJson({ action: 'tunnel' }))
+
+  assert.equal(response.status, 200)
+  assert.equal(body.ok, true)
+  assert.equal(body.warp.installed, true)
+  assert.deepEqual(
+    calls.find((call) => call.op === 'warpAction'),
+    { op: 'warpAction', action: 'tunnel' },
+  )
+})
+
+test('POST api/warp rejects an unknown action with 400', async (t) => {
+  const { base } = await startRoutes(t)
+
+  const { response, body } = await getJson(`${base}/api/warp`, postJson({ action: 'reboot' }))
+
+  assert.equal(response.status, 400)
+  assert.equal(body.ok, false)
+  assert.match(body.error, /dns-only/)
 })

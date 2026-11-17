@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "PC bridge (ping / exec over HTTP)",
-    "description": "Listens on loopback, LAN or Tailscale for ping and shell-command requests. Settings → 电脑执行桥 has a master switch, pairing memory, a custom secret path and local-data cleanup. Tools pc_ping and pc_exec let the agent use it (optionally not registered)."
+    "description": "Listens on loopback, LAN or remote (Tailscale) for ping and shell-command requests. Settings -> PC bridge has a master switch, pairing memory, a custom secret path, local-data cleanup, and automatic WARP/Tailscale coexistence (WARP in DNS-only mode). Tools pc_ping and pc_exec let the agent use it (optionally not registered)."
   }
 }

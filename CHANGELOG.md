@@ -4,6 +4,54 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-11-17
+
+### Added
+
+- `lib/warp.mjs`: wraps `warp-cli` — reads `status` / `settings`, classifies
+  tunnel modes and switches between DNS-only (`doh`) and the full tunnel.
+- `lib/tailscale.mjs`: reads `tailscale status --json`, picks the tailnet IPv4
+  address and builds the remote URL; degrades gracefully when Tailscale is
+  absent or signed out.
+- `GET /pc-bridge/api/warp` (WARP, Tailscale and remote-URL state) and
+  `POST /pc-bridge/api/warp` with `{action: "dns-only" | "tunnel" | "status"}`.
+- `remoteMode: tailscale`: the listener binds the tailnet address itself (so the
+  Wi-Fi / hotspot interfaces stay closed) and falls back to `0.0.0.0` when
+  Tailscale is offline or that address cannot be bound; the settings page shows
+  the tailnet remote URL and `pc_ping` / `pc_exec` stay registered.
+- `warpCoexist` (default `true`, honoured only with `remoteMode: tailscale`):
+  when WARP is in a tunnel mode at start, switch it with `warp-cli mode doh` so
+  Tailscale's control connection survives; `false` never touches WARP.
+- Settings page network card: Tailscale online state, tailnet address, copyable
+  remote URL, buttons for "WARP DNS-only (coexist)" / "restore WARP tunnel" /
+  "refresh network state", and the `warpCoexist` checkbox.
+
+### Changed
+
+- README (Chinese and English): remote (Tailscale) and WARP sections, the
+  connection table and the config table.
+- Test suite covers the Tailscale and WARP clients, tailnet binding and the
+  network-check lifecycle — 138 tests.
+
+### Fixed
+
+- `warp-cli settings` prints human-readable mode names (`DnsOverHttps`,
+  `WarpWithDnsOverHttps`, …); they are now normalised, so a `warp+doh` tunnel
+  is recognised and switched instead of being mistaken for "nothing to do".
+- The post-start network check is stored, cleared on stop and generation-guarded,
+  so stopping or restarting the bridge cannot leave a stray `warp-cli` run.
+- A failed WARP switch no longer reports `installed: false`; it keeps the real
+  state, records an audit entry and surfaces the error.
+- "Restore WARP tunnel" puts back the previously recorded mode instead of always
+  forcing plain `warp` (which would silently drop a DoH/DoT choice).
+- The remote URL is only produced for a running, non-client bridge whose
+  Tailscale is online; `ssh` mode and stopped bridges no longer show a LAN
+  address that cannot be reached.
+- The built-in tools dial the address the server actually bound, so a
+  tailnet-only listener still works from the local agent.
+- Tests inject fake WARP/Tailscale clients; the suite no longer touches the
+  machine's real VPN.
+
 ## [0.3.1] - 2026-11-17
 
 ### Added
