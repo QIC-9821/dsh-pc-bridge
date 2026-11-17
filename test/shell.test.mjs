@@ -50,3 +50,20 @@ test('isShellAvailable checks absolute executables only', () => {
   assert.equal(isShellAvailable({ exe: '/bin/bash', args: [] }, { exists: () => true }), true)
   assert.equal(isShellAvailable({ exe: 'powershell.exe', args: [] }, { exists: () => false }), true)
 })
+
+test('Android uses Termux bash when PREFIX points at one', () => {
+  const shell = resolveShell({
+    platform: 'android',
+    env: { PREFIX: '/data/data/com.termux/files/usr' },
+    exists: (p) => p === '/data/data/com.termux/files/usr/bin/bash',
+  })
+  assert.equal(shell.exe, '/data/data/com.termux/files/usr/bin/bash')
+  assert.deepEqual(shell.args, ['-lc'])
+})
+
+test('Android falls back to /system/bin/sh', () => {
+  const shell = resolveShell({ platform: 'android', env: {}, exists: (p) => p === '/system/bin/sh' })
+  assert.equal(shell.exe, '/system/bin/sh')
+  assert.deepEqual(shell.args, ['-c'])
+  assert.equal(shell.kind, 'sh')
+})

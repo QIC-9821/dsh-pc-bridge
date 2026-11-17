@@ -27,6 +27,7 @@ export const Config = z
       listenPort: field(z.natural().default(18790)),
       secretFile: field(z.string().default('')),
       secretEnv: field(z.string().default('DSH_PC_BRIDGE_SECRET')),
+      secret: field(z.string().default('')),
       peerUrl: field(z.string().default('')),
       defaultTimeoutMs: field(z.natural().default(30000)),
       maxTimeoutMs: field(z.natural().default(600000)),
@@ -51,13 +52,16 @@ export async function apply(ctx, config = {}) {
 
   const logger = createLogger({ dir: cfg.stateDir, tag: 'pc-bridge' })
 
-  const { secret, source } = await resolveSecret({
-    envName: cfg.secretEnv,
-    secretFile: cfg.secretFile,
-    stateDir: cfg.stateDir,
-    create: cfg.role !== 'client',
-    logger,
-  })
+  const resolved = cfg.secret
+    ? { secret: cfg.secret, source: 'config' }
+    : await resolveSecret({
+        envName: cfg.secretEnv,
+        secretFile: cfg.secretFile,
+        stateDir: cfg.stateDir,
+        create: cfg.role !== 'client',
+        logger,
+      })
+  const { secret, source } = resolved
   if (!secret) logger.warn(`no bridge secret (${source}); pc tools will refuse to run commands`)
 
   const shell = resolveShell({ shellPath: cfg.shellPath })

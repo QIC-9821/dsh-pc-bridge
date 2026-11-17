@@ -123,3 +123,27 @@ node --check index.js
 ## 许可
 
 MIT
+
+## Android / tablet host
+
+An Android host has no `/bin/bash`: the bridge picks Termux bash when `$PREFIX`
+points at one, otherwise `/system/bin/sh`. A timeout kills the whole process
+group with `process.kill(-pid)`; `taskkill` is Windows-only.
+
+To let a PC reach a tablet, the tablet must listen on the LAN:
+
+```yaml
+- insert:
+    - id: dsh-pc-bridge
+      name: 'dsh-pc-bridge'
+      config:
+        role: host
+        listenHost: 0.0.0.0
+        listenPort: 18790
+        secret: 'shared-secret'
+```
+
+`0.0.0.0` is safe only with a strong shared `secret`; every request without the
+`x-pc-secret` header is rejected. On the PC side call `pc_exec` with an explicit
+`peer` (e.g. `http://192.168.0.50:18790`) because the tablet address changes
+with the Wi-Fi network.

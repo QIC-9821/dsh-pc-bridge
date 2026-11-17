@@ -4,6 +4,17 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-11-07
+
+### Added
+
+- Android support: shell discovery uses Termux bash (`$PREFIX/bin/bash`) or the
+  platform `/system/bin/sh`, and a timeout kills the whole process group
+  (`process.kill(-pid)`) instead of relying on `taskkill`.
+- `peer` parameter on `pc_ping` / `pc_exec`, so one machine can reach another
+  bridge at a changing LAN address (tablet on a different Wi-Fi).
+- Inline `secret` config field, for hosts whose cordis patch is the only place a
+  shared secret can be provisioned (Android app stores no external file).
 ## [0.1.1] - 2026-11-06
 
 ### Added
