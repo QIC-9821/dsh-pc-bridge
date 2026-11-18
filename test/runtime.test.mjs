@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { appendFile, mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
+import { appendFile, mkdir, mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { networkInterfaces, tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -387,6 +387,20 @@ test('migrateSecret moves the file, rewrites settings and deletes the old one', 
   const noop = await runtime.migrateSecret(nextFile)
   assert.equal(noop.ok, true)
   assert.equal(noop.moved, false)
+  await runtime.stop()
+})
+
+test('migrateSecret treats a directory target as "put the secret inside it"', async (t) => {
+  const { runtime, home } = await withRuntime(t)
+  await runtime.start()
+  const dir = join(home, 'pc-bridge', 'keys')
+  await mkdir(dir, { recursive: true })
+
+  const result = await runtime.migrateSecret(dir)
+  assert.equal(result.ok, true)
+  assert.equal(result.moved, true)
+  assert.equal(result.to, join(dir, 'secret'))
+  assert.match(String(runtime.status().secret.source), /keys[\\/]secret$/)
   await runtime.stop()
 })
 

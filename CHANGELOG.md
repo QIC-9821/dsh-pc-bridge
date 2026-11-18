@@ -4,6 +4,17 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1] - 2026-11-18
+
+### Fixed
+
+- Settings page turned completely blank after a restart: the connection-mode
+  card rendered a `Choice` radio component that no longer existed. Restored it,
+  so the section renders again.
+- Buttons were disabled whenever any action was running, so a stuck request
+  could leave "保存并应用" unclickable with no feedback. Each button now only
+  disables itself while its own action runs.
+
 ## [0.4.0] - 2026-11-17
 
 ### Added

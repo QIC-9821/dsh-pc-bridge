@@ -3,9 +3,12 @@ window.__ModuleLoader__.load({
   factory(require) {
     const React = require('react')
     const h = React.createElement
-    const { useCallback, useEffect, useState } = React
+    const { useCallback, useEffect, useRef, useState } = React
 
     const API = '/pc-bridge/api/'
+    // Changes whenever the UI bundle is edited; surfaced in diagnostics so a
+    // stale browser module is immediately distinguishable from a fresh one.
+    const BUILD = 'ui-2026-11-18-trace'
 
     const CARD = {
       border: '1px solid var(--dsh-border, rgba(127,127,127,.28))',
@@ -65,6 +68,21 @@ window.__ModuleLoader__.load({
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(body ?? {}),
       })
+    }
+
+    // Fire-and-forget diagnostics: the server appends these to ui-events.log so
+    // a "button does nothing" report can be checked from outside the browser.
+    function trace(event, detail) {
+      try {
+        void fetch(API + 'ui-event', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ event, detail: detail ?? null }),
+          keepalive: true,
+        }).catch(() => {})
+      } catch {
+        /* never break the page for diagnostics */
+      }
     }
 
     function Card(props) {
@@ -247,6 +265,21 @@ window.__ModuleLoader__.load({
         return () => clearInterval(timer)
       }, [load])
 
+      const traced = useRef(false)
+      useEffect(() => {
+        if (!data || traced.current) return undefined
+        traced.current = true
+        trace('panel:mount', { build: BUILD, version: data?.status?.version, state: data?.status?.state })
+        const onError = (event) => trace('window:error', { message: String(event?.message || event?.error || '') })
+        const onRejection = (event) => trace('window:rejection', { reason: String(event?.reason?.message || event?.reason || '') })
+        window.addEventListener('error', onError)
+        window.addEventListener('unhandledrejection', onRejection)
+        return () => {
+          window.removeEventListener('error', onError)
+          window.removeEventListener('unhandledrejection', onRejection)
+        }
+      }, [data])
+
       useEffect(() => {
         if (!pairCode) return undefined
         const timer = setInterval(() => setPairNow(Date.now()), 1000)
@@ -344,6 +377,7 @@ window.__ModuleLoader__.load({
       }
 
       async function save() {
+        trace('save:click', { dirty: Object.keys(draft), busy: String(busy || '') })
         const NUMERIC = [
           'listenPort',
           'discoveryPort',
@@ -366,10 +400,19 @@ window.__ModuleLoader__.load({
             patch[key] = next
           }
           if (Object.keys(patch).length === 0) {
+            trace('save:empty', { draft: Object.keys(draft) })
             setNote('没有要保存的改动。')
             return
           }
-          const next = await post('config', { patch })
+          trace('save:post', { keys: Object.keys(patch) })
+          let next
+          try {
+            next = await post('config', { patch })
+          } catch (failure) {
+            trace('save:fail', { keys: Object.keys(patch), error: String(failure?.message || failure) })
+            throw failure
+          }
+          trace('save:ok', { keys: Object.keys(patch) })
           const warnings = Array.isArray(next.warnings) ? next.warnings.map(String) : []
           setData((current) => ({
             ...(current || {}),
@@ -774,7 +817,7 @@ window.__ModuleLoader__.load({
                 h('button', {
                   key: 'clear',
                   style: { ...BUTTON, padding: '3px 10px', fontSize: 12, borderColor: '#ef4444', color: '#ef4444' },
-                  disabled: Boolean(busy),
+                  disabled: busy === 'pair-clear',
                   onClick: () => void clearPair(),
                 }, busy === 'pair-clear' ? '断开中…' : '断开配对'),
               ]),
@@ -922,7 +965,7 @@ window.__ModuleLoader__.load({
           h('button', {
             key: 'go',
             style: { ...BUTTON, borderColor: '#ef4444', color: '#ef4444' },
-            disabled: Boolean(busy),
+            disabled: busy === 'cleanup',
             onClick: () => void cleanupData(),
           }, busy === 'cleanup' ? '删除中…' : '删除本机数据'),
           h('span', { key: 'tip', style: MUTED }, '删除密钥、settings.json、审计日志和执行桥日志，不可恢复。'),
@@ -951,9 +994,9 @@ window.__ModuleLoader__.load({
       ])
 
       const footer = h('div', { key: 'footer', style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 6 } }, [
-        h('button', { key: 'save', style: PRIMARY, disabled: Boolean(busy), onClick: () => void save() }, busy === 'save' ? '保存中…' : '保存并应用'),
-        h('button', { key: 'test', style: BUTTON, disabled: Boolean(busy), onClick: () => void testPeer() }, busy === 'test' ? '测试中…' : '测试连接'),
-        h('button', { key: 'rotate', style: BUTTON, disabled: Boolean(busy), onClick: () => void rotateSecret() }, busy === 'rotate' ? '重置中…' : '重置口令'),
+        h('button', { key: 'save', style: PRIMARY, disabled: busy === 'save', onClick: () => void save() }, busy === 'save' ? '保存中…' : '保存并应用'),
+        h('button', { key: 'test', style: BUTTON, disabled: busy === 'test', onClick: () => void testPeer() }, busy === 'test' ? '测试中…' : '测试连接'),
+        h('button', { key: 'rotate', style: BUTTON, disabled: busy === 'rotate', onClick: () => void rotateSecret() }, busy === 'rotate' ? '重置中…' : '重置口令'),
         h('span', { key: 'hint', style: MUTED }, dirty.length === 0 ? '配置已保存' : `${dirty.length} 项改动未保存`),
       ])
 

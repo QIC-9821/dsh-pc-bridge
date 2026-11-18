@@ -1,6 +1,6 @@
 {
   "name": "dsh-pc-bridge",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "HTTP bridge that lets a peer machine ping and run shell commands on this host (Windows, Linux, Android/Termux): settings UI with a master switch, LAN/Tailscale access, UDP discovery, remember-once pairing, a movable secret file and local-data cleanup, automatic WARP DNS-only coexistence for tailnet access, plus an optional ssh reverse-tunnel supervisor.",
   "type": "module",
   "license": "MIT",

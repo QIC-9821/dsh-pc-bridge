@@ -41,7 +41,7 @@ Pick one:
 dsh plugin add dsh-pc-bridge
 
 # straight from the GitHub tag
-dsh plugin add github:QIC-9821/dsh-pc-bridge#v0.4.0
+dsh plugin add github:QIC-9821/dsh-pc-bridge#v0.4.1
 
 # local checkout (development)
 dsh plugin add /absolute/path/to/dsh-pc-bridge
