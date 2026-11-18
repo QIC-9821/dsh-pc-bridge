@@ -104,6 +104,36 @@ window.__ModuleLoader__.load({
       )
     }
 
+    function Choice(props) {
+      return h(
+        'label',
+        {
+          style: {
+            display: 'flex',
+            gap: 9,
+            alignItems: 'flex-start',
+            padding: '6px 0',
+            fontSize: 13,
+            cursor: 'pointer',
+          },
+        },
+        [
+          h('input', {
+            key: 'radio',
+            type: 'radio',
+            name: props.name,
+            checked: Boolean(props.checked),
+            onChange: () => props.onChange(props.value),
+            style: { marginTop: 2 },
+          }),
+          h('span', { key: 'text', style: { display: 'flex', flexDirection: 'column', gap: 2 } }, [
+            h('span', { key: 'label' }, props.label),
+            props.desc ? h('span', { key: 'desc', style: MUTED }, props.desc) : null,
+          ]),
+        ],
+      )
+    }
+
     function Check(props) {
       return h(
         'label',
