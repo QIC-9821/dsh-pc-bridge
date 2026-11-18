@@ -68,6 +68,11 @@ export const Config = z
       remoteMode: field(z.string().default('off')),
       enabled: field(z.boolean().default(true)),
       purgeOnUninstall: field(z.boolean().default(false)),
+      fileEnabled: field(z.boolean().default(true)),
+      fileToolsEnabled: field(z.boolean().default(false)),
+      fileRoots: field(z.array(z.string()).default([])),
+      fileChunkBytes: field(z.natural().default(1048576)),
+      fileMaxBytes: field(z.natural().default(67108864)),
     })
   : undefined
 

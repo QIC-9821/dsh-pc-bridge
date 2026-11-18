@@ -8,7 +8,7 @@ window.__ModuleLoader__.load({
     const API = '/pc-bridge/api/'
     // Changes whenever the UI bundle is edited; surfaced in diagnostics so a
     // stale browser module is immediately distinguishable from a fresh one.
-    const BUILD = 'ui-2026-11-18-trace'
+    const BUILD = 'ui-2026-11-18-files'
 
     const CARD = {
       border: '1px solid var(--dsh-border, rgba(127,127,127,.28))',
@@ -248,6 +248,10 @@ window.__ModuleLoader__.load({
       const [pairNow, setPairNow] = useState(() => Date.now())
       const [pairUrl, setPairUrl] = useState('')
       const [pairInput, setPairInput] = useState('')
+      // Two levels of navigation: the file channel lives inside this section,
+      // not next to it, so it gets a tab here instead of its own settings entry.
+      const [tab, setTab] = useState('overview')
+      const [fileTest, setFileTest] = useState(null)
 
       const load = useCallback(async () => {
         try {
@@ -386,6 +390,8 @@ window.__ModuleLoader__.load({
           'defaultTimeoutMs',
           'maxTimeoutMs',
           'maxOutputBytes',
+          'fileChunkBytes',
+          'fileMaxBytes',
         ]
         await run('save', async () => {
           const patch = {}
@@ -421,10 +427,15 @@ window.__ModuleLoader__.load({
           }))
           setDraft({})
           setMode(null)
+          // Tool-registry-only patches never bounce the listener; saying
+          // "restarted" there would make people hunt for a non-existent outage.
+          const toolOnly = Object.keys(patch).every((key) => key === 'toolsMode' || key === 'fileToolsEnabled')
           setNote(
             warnings.length
               ? `已保存，但有警告：${warnings.join('；')}`
-              : '已保存并应用；执行桥已重启（只重启插件内的监听，不重启 DSH）。',
+              : toolOnly
+                ? '已保存；工具注册表已更新（不重启监听，下一轮对话生效）。'
+                : '已保存并应用；执行桥已重启（只重启插件内的监听，不重启 DSH）。',
           )
         })
       }
@@ -464,6 +475,15 @@ window.__ModuleLoader__.load({
           const next = await post('test', { url: value('peerUrl') || '' })
           setTest(next.result)
           setNote(next.result?.ok ? '连接成功，对端在线。' : '连接失败，请看下方结果。')
+        })
+      }
+
+      async function runFileTest() {
+        await run('file-test', async () => {
+          const next = await post('file-test')
+          const result = next.result || next
+          setFileTest(result)
+          setNote(result?.ok ? '文件自检通过：写入、读回、删除都正常。' : `文件自检失败：${result?.error || '未知原因'}`)
         })
       }
 
@@ -890,6 +910,85 @@ window.__ModuleLoader__.load({
         }),
       ])
 
+      const files = status.files || {}
+      const fileRegistered = registered.filter((name) => String(name).startsWith('pc_file_'))
+      const rootsValue = value('fileRoots')
+      const rootsText = Array.isArray(rootsValue) ? rootsValue.join('\n') : String(rootsValue ?? '')
+      const filesTab = [
+        h(Card, { key: 'file-tools', title: '文件工具（省 token 的开关）' }, [
+          h(Check, {
+            key: 'tools',
+            checked: value('fileToolsEnabled') === true,
+            label: '在本机注册 pc_file_list / pc_file_read / pc_file_write',
+            help: '关闭时不注册这三个工具，它们的参数说明就不会进入每轮上下文，省 token。关掉不影响对端读写本机文件，也不影响 pc_ping / pc_exec。',
+            onChange: (next) => set('fileToolsEnabled', next),
+          }),
+          h('div', { key: 'state', style: { ...MUTED, marginTop: 6 } }, fileRegistered.length
+            ? `当前已注册：${fileRegistered.join(' / ')}`
+            : '当前未注册（省 token）；保存并应用后生效，不会重启监听。'),
+        ]),
+        h(Card, { key: 'file-access', title: '对端访问本机文件' }, [
+          h(Check, {
+            key: 'enabled',
+            checked: value('fileEnabled') !== false,
+            label: '允许对端读写本机文件',
+            help: '关闭后 /file/* 一律回 404，对端既读不走也传不进来。改这一项会让执行桥重启一次（毫秒级）。',
+            onChange: (next) => set('fileEnabled', next),
+          }),
+          h(Field, {
+            key: 'roots',
+            label: '允许的目录（fileRoots）',
+            help: '一行一个；留空 = 不限制（与 pc_exec 同权）。支持 ~ 和相对路径，最多 20 条。',
+          }, h('textarea', {
+            style: { ...INPUT, minHeight: 74, resize: 'vertical', fontFamily: 'inherit' },
+            value: rootsText,
+            placeholder: 'D:\\共享\n~/Downloads',
+            onChange: (event) => set('fileRoots', event.target.value.split('\n')),
+          })),
+          h('div', { key: 'grid', style: { ...GRID, marginTop: 10 } }, [
+            h(Field, { key: 'chunk', first: true, label: '分块大小（fileChunkBytes）', help: `约 ${bytes(value('fileChunkBytes'))}` }, h(Text, {
+              value: value('fileChunkBytes'),
+              type: 'number',
+              onChange: (next) => set('fileChunkBytes', next),
+            })),
+            h(Field, { key: 'max', label: '单次上限（fileMaxBytes）', help: `约 ${bytes(value('fileMaxBytes'))}` }, h(Text, {
+              value: value('fileMaxBytes'),
+              type: 'number',
+              onChange: (next) => set('fileMaxBytes', next),
+            })),
+          ]),
+          h('div', { key: 'rows', style: { ...MUTED, marginTop: 8, lineHeight: 1.6 } }, [
+            `服务端文件通道：${files.enabled === false ? '已关闭' : '已开启'}`,
+            ` · 根目录：${(files.roots || []).length ? files.roots.join('；') : '不限'}`,
+            ` · 分块 ${bytes(files.chunkBytes)} · 单次上限 ${bytes(files.maxBytes)}`,
+          ].join('')),
+        ]),
+        h(Card, { key: 'file-usage', title: '怎么用' }, [
+          h('div', { key: 'body', style: { fontSize: 13, lineHeight: 1.7 } }, [
+            '在另一端（手机 / 平板 / 另一台电脑）的 DSH 里直接说「读一下对端的 D:\\x\\y.txt」就行，工具是 pc_file_list / pc_file_read / pc_file_write。',
+            h('div', { key: 'b', style: { marginTop: 6 } }, 'read 支持分块（offset / maxBytes），也可以给 dest 直接落到本机；write 支持 content 或 source（本机文件），大文件自动分块并逐块校验 sha256。'),
+            h('div', { key: 'c', style: { marginTop: 6, ...MUTED } }, '命令行同样可用：pcctl file list | stat | get | put。'),
+          ]),
+        ]),
+        h(Card, { key: 'file-test', title: '自检' }, [
+          h('div', { key: 'row', style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' } }, [
+            h('button', {
+              key: 'go',
+              style: BUTTON,
+              disabled: busy === 'file-test',
+              onClick: () => void runFileTest(),
+            }, busy === 'file-test' ? '自检中…' : '写 / 读 / 删一个临时文件'),
+            h('span', { key: 'tip', style: MUTED }, '在本机临时目录里走一遍完整的文件通道，不碰你的文件。'),
+          ]),
+          fileTest
+            ? h('pre', {
+                key: 'out',
+                style: { margin: '10px 0 0', whiteSpace: 'pre-wrap', wordBreak: 'break-all', fontSize: 11.5, background: 'rgba(127,127,127,.08)', padding: 10, borderRadius: 8 },
+              }, JSON.stringify(fileTest, null, 2))
+            : null,
+        ]),
+      ]
+
       const advancedCard = h(Card, { key: 'advanced', title: '高级参数' }, [
         h('div', { key: 'grid', style: GRID }, [
           h(Field, { key: 'listenPort', first: true, label: '监听端口', help: '0 = 随机端口；默认 18790。' }, h(Text, {
@@ -1010,6 +1109,18 @@ window.__ModuleLoader__.load({
           ])
         : null
 
+      const tabButton = (id, label) => h('button', {
+        key: `tab-${id}`,
+        style: {
+          ...BUTTON,
+          padding: '5px 12px',
+          border: `1px solid ${tab === id ? 'var(--dsh-accent, #3b82f6)' : 'transparent'}`,
+          background: tab === id ? 'rgba(59,130,246,.12)' : 'transparent',
+          color: 'inherit',
+        },
+        onClick: () => setTab(id),
+      }, label)
+
       return h('div', { style: { maxWidth: 880, margin: '0 auto', padding: '4px 0 24px' } }, [
         h('div', { key: 'head', style: { display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12, marginBottom: 10 } }, [
           h('h2', { key: 'title', style: { margin: 0, fontSize: 18 } }, '电脑执行桥'),
@@ -1026,17 +1137,20 @@ window.__ModuleLoader__.load({
           ? h('div', { key: 'note', style: { padding: '9px 12px', marginBottom: 12, borderRadius: 8, background: 'rgba(34,197,94,.12)', color: '#16a34a', fontSize: 13 } }, note)
           : null,
 
-        enabledCard,
-        statusCard,
-        addressCard,
-        networkCard,
-        modeCard,
-        discoverCard,
-        pairCard,
-        toolsCard,
-        advancedCard,
-        auditCard,
-        testCard,
+        h('div', {
+          key: 'tabs',
+          style: {
+            display: 'flex',
+            gap: 6,
+            marginBottom: 14,
+            paddingBottom: 8,
+            borderBottom: '1px solid var(--dsh-border, rgba(127,127,127,.2))',
+          },
+        }, [tabButton('overview', '总览'), tabButton('files', '文件传输')]),
+
+        ...(tab === 'files'
+          ? filesTab
+          : [enabledCard, statusCard, addressCard, networkCard, modeCard, discoverCard, pairCard, toolsCard, advancedCard, auditCard, testCard]),
         footer,
       ])
     }

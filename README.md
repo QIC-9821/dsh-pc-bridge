@@ -85,6 +85,11 @@ dsh plugin add /absolute/path/to/dsh-pc-bridge
 | `sshKeyPath` | 空 | 私钥路径；空 = 默认密钥 |
 | `tunnelRemotePort` / `tunnelLocalPort` | `18790` | 远端/本端端口（都绑 127.0.0.1） |
 | `toolsMode` | `auto` | `auto` 只有配了 `peerUrl` 或 `remoteMode` 才注册工具；`always` 常驻；`off` 不注册 |
+| `fileEnabled` | `true` | 是否开放文件通道（`/file/stat|list|read|write`）。关掉后这四个端点直接 404，工具再开也用不了 |
+| `fileToolsEnabled` | `false` | 文件工具（`pc_file_list` / `pc_file_read` / `pc_file_write`）的独立开关。关着就不注册，每轮省 token；与 `toolsMode` 分开控制，打开时即使 `toolsMode: off` 也注册 |
+| `fileRoots` | `[]` | 允许读写的根目录列表（空 = 不限制，但只对 `fileEnabled` 生效）；按 `cwd` 解析相对路径 |
+| `fileChunkBytes` | `1048576` | 传输分块大小（64 KiB–16 MiB） |
+| `fileMaxBytes` | `67108864` | 单个文件传输上限（1 MiB–4 GiB） |
 | `remoteMode` | `off` | `off` / `tailscale` / `ssh`。选 `tailscale` 时优先绑 tailnet 地址（Tailscale 不在线才退回 `0.0.0.0`），设置页显示 tailnet 远程地址；非 `off` 时工具常驻 |
 | `warpCoexist` | `true` | `remoteMode: tailscale` 时，启动时若发现 WARP 在隧道模式就自动切到「仅 DNS」（`warp-cli mode doh`），让 Tailscale 保持在线；设 `false` 则完全不动 WARP |
 | `discoveryEnabled` | `true` | 是否回应局域网 UDP 发现 |
@@ -93,7 +98,7 @@ dsh plugin add /absolute/path/to/dsh-pc-bridge
 | `auditKeep` | `5` | `audit.jsonl` 超过 1 MB 时保留的历史份数 |
 | `purgeOnUninstall` | `false` | 实验性：插件被移除时尝试删除本机数据（密钥/设置/审计/日志）。依赖 DSH 在卸载时触发插件 teardown，默认关 |
 
-## 设置页（0.4.0）
+## 设置页（0.5.0）
 
 安装后打开 **设置 → 电脑执行桥**，里面能改的东西都会写进 `$DSH_HOME/pc-bridge/settings.json`
 （Windows 默认 `C:\Users\<你>\.dsh\pc-bridge\settings.json`），下次启动仍然生效：
@@ -105,7 +110,11 @@ dsh plugin add /absolute/path/to/dsh-pc-bridge
 - 附近的电脑：点「搜索」发一次 UDP 扫描，选中设备就能填进 `peerUrl`；
 - 配对：本机生成 6 位码给对端输入，或输入对端的地址 + 码，成功后双方共用同一把密钥；配对成功会记住对端名称、平台、传输方式、配对时间，被配对的设备也记进历史（最多 10 台，按地址去重），卡片上可以直接「断开配对」；
 - 工具：一个勾选框「没配对端时也注册 pc_ping / pc_exec」。不勾（默认）= 只有填了对端地址或开了远程模式才注册，平时省 token；勾上 = 总是注册（`toolsMode: always`）。要完全关掉工具用总开关；
-- 底部只有「保存并应用 / 测试连接 / 重置口令」；保存后执行桥会重启一次（毫秒级，只重启插件内的监听，**不重启 DSH**）；
+- **文件传输**（页面顶部的第二个页签，和「总览」上下级关系）：
+  - 「文件工具」勾选框 `fileToolsEnabled`（默认**关**）：关着时 `pc_file_*` 三件工具完全不注册——这是默认状态，每轮对话不花这三个 schema 的 token；勾上并在「保存」后立刻生效；
+  - 「对端访问本机文件」勾选框 `fileEnabled`（默认开），以及 `fileRoots`（一行一个根目录）、分块大小 `fileChunkBytes`、单文件上限 `fileMaxBytes`；改这几项会重启一次监听；
+  - 页签底部有「自检」按钮（`POST /pc-bridge/api/file-test`）：在本机临时目录跑一遍写→读→stat→删，返回每步耗时，用来确认文件层和根目录配置真的可用；
+- 底部只有「保存并应用 / 测试连接 / 重置口令」；保存后执行桥会重启一次（毫秒级，只重启插件内的监听，**不重启 DSH**）；只改 `toolsMode` / `fileToolsEnabled` 时不重启，只重排工具注册表；
 - 高级：端口、超时、输出上限、配对码有效期、审计份数、发现开关、密钥文件路径（`secretFile`）、卸载清理开关；
 - 密钥路径：改 `secretFile` 时会「写新文件 → 读回校验 → 改设置 → 重启 → 删旧文件」，保存后执行桥自动重启一次（毫秒级），不用重启软件，旧文件删不掉只给警告、不回滚；密钥来自 `secret` 配置或环境变量时拒绝迁移；
 - 删除本机数据：按钮 + 二次确认，清掉密钥文件、`settings.json`、`audit.jsonl*`、`bridge.log*`（目录保留），适合卸载前手动收拾；
@@ -161,6 +170,9 @@ Environment=DSH_PC_BRIDGE_SECRET=替换成同一串
 ```bash
 PC_BRIDGE_SECRET=... pcctl ping
 PC_BRIDGE_SECRET=... pcctl exec -- "hostname; echo OK"
+PC_BRIDGE_SECRET=... pcctl file list /tmp
+PC_BRIDGE_SECRET=... pcctl file get /tmp/report.pdf --out ./report.pdf
+PC_BRIDGE_SECRET=... pcctl file put ./build.zip /srv/app/build.zip
 ```
 
 ## 安全
@@ -169,7 +181,9 @@ PC_BRIDGE_SECRET=... pcctl exec -- "hostname; echo OK"
 - 每个 `/ping`、`/exec`、`/info` 请求都检查共享密钥（`timingSafeEqual`），缺失/错误返回 401。
 - `/pair` 免鉴权，但必须出示 6 位一次性配对码；同一 IP 连续失败 5 次锁 10 分钟，码默认 300 秒过期。
 - `/health` 只回版本、平台和能力，不泄露主机名/用户/密钥。
-- 请求体 ≤ 64 KiB、命令 ≤ 8 KiB；输出截断；超时杀进程树。
+- `/file/stat|list|read|write` 与 `/exec` 同级：同一把共享密钥，未配密钥直接 401；`fileEnabled: false` 时这四个端点连路由都不挂（404）。
+- 文件路径按 `fileRoots` 限制（先 `realpath` 再比对，符号链接指向根外会被 403 拒绝）；空 `fileRoots` = 不限制，请按需收紧。
+- 请求体 ≤ 64 KiB、命令 ≤ 8 KiB；输出截断；超时杀进程树；文件分块上传走 `<目标>.pcbridge-<uploadId>.part`，末块校验整文件 sha256 后才 rename，失败不会留下半个目标文件。
 - 密钥不进配置文件，日志只写密钥来源（`env:` / `file:`），不写值；审计只记命令与退出码，不记输出。
 - 桥提供的是**任意命令执行**能力。只把密钥/配对码给可信的对端，只在对端可信时切局域网或开隧道。
 
@@ -177,11 +191,15 @@ PC_BRIDGE_SECRET=... pcctl exec -- "hostname; echo OK"
 
 - `pc_ping`：返回 `{ok, host, user, shell, now}` 或网络错误。
 - `pc_exec {"command":"...","timeoutSec":30}`：返回 `{ok, exitCode, stdout, stderr, durationMs, timedOut, truncated}`。
+- `pc_file_list {"path":"/data"}`：列出目录（`name/type/size/mtime`），可带 `limit`。
+- `pc_file_read {"path":"...","offset":0,"maxBytes":65536,"encoding":"auto"}`：内联读一个分块（`auto` 是 UTF-8 文本还是 base64，附 `sha256` 与 `nextOffset`）；给 `dest` 则整文件下载到本地（先写 `.pcbridge.part`，逐块校验 sha256，最后 rename）。
+- `pc_file_write {"path":"...","content":"..."}`：内联写（≤ 1 MiB）；给 `source` 则上传本地文件（分块 + 每块 sha256 + 末块整文件 sha256）；`append` / `createDirs` 可选。
+- 三个 `pc_file_*` 只在设置页「文件传输 → 文件工具」打开时注册；需要时可分别开 `toolsMode`（`pc_ping`/`pc_exec`）与 `fileToolsEnabled`（文件三件套）。
 - 默认 `toolsMode: auto`：本机没配 `peerUrl` 时不常驻这两个工具（每个工具 schema 每轮约占 0.3k token）；需要时在设置页切 `always`，或直接填好 `peerUrl`。
 
 ## 审计
 
-`$DSH_HOME/pc-bridge/audit.jsonl` 一行一条 JSON，记录启动/停止/配置变更/配对/执行（含命令、退出码、耗时、来源 IP，不含输出）。
+`$DSH_HOME/pc-bridge/audit.jsonl` 一行一条 JSON，记录启动/停止/配置变更/配对/执行（含命令、退出码、耗时、来源 IP，不含输出）与文件操作（`kind:"file"`：`op`、`path`、`bytes`、`ok`、`ms`、`ip`，**不记录文件内容**）。
 文件超过 1 MB 自动轮转，保留 `auditKeep` 份；设置页只展示最后 20 条。
 
 ## 开发

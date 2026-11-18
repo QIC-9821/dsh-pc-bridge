@@ -4,6 +4,40 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-11-18
+
+### Added
+
+- File channel on the bridge: `GET /file/stat`, `GET /file/list`,
+  `GET /file/read` and `POST /file/write`, all behind the same shared secret.
+  Reads are paged and carry a per-chunk sha256; writes accept chunked uploads
+  into `<target>.pcbridge-<uploadId>.part` and rename into place only after the
+  last chunk's whole-file sha256 matches (`append` and `createDirs` supported).
+- `lib/file.mjs`: path resolution confined to `fileRoots` via `realpath` of the
+  deepest existing ancestor, so a symlink/junction inside a root cannot be used
+  to write outside it; `FILE_LIMITS` bounds the chunk and file sizes.
+- Three tools, registered only while `fileToolsEnabled` is on:
+  `pc_file_list`, `pc_file_read` (inline paged read, or download via `dest`) and
+  `pc_file_write` (inline ≤ 1 MiB, or upload via `source`).
+- Settings page: a second tab **文件传输** inside the 电脑执行桥 section — the
+  file-tools switch (`fileToolsEnabled`, off by default so the schemas cost
+  nothing per turn), the peer-access switch (`fileEnabled`), `fileRoots` (one
+  per line), chunk/size limits, and a self-test button
+  (`POST /pc-bridge/api/file-test`) that writes, reads, stats and deletes a temp
+  file locally.
+- `pcctl file list|stat|get|put`, including `--out`, `--overwrite` and `--peer`.
+- `GET /info` exposes `file.enabled` and `file.chunkBytes`; `/health`
+  capabilities gain `file` while the channel is on (they drop it when
+  `fileEnabled` is off, and the routes then answer 404).
+
+### Changed
+
+- `applyPatch` treats `toolsMode` and `fileToolsEnabled` as registry-only
+  settings: the settings file is written, the config reloaded and the tool table
+  re-registered **without** restarting the listener.
+- Audit entries of kind `file` record `op`, `path`, `bytes`, `ok`, `ms` and `ip`
+  — never file contents, and failed operations are recorded too.
+
 ## [0.4.1] - 2026-11-18
 
 ### Fixed

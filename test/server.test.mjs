@@ -1,5 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 import { createBridgeServer } from '../lib/server.mjs'
 
@@ -107,7 +110,7 @@ test('health is reachable without the shared secret', async (t) => {
   assert.equal(body.name, 'dsh-pc-bridge')
   assert.equal(body.version, '0.3.0')
   assert.equal(body.platform, process.platform)
-  assert.deepEqual([...body.capabilities].sort(), ['exec', 'pair', 'ping'])
+  assert.deepEqual([...body.capabilities].sort(), ['exec', 'file', 'pair', 'ping'])
   assert.equal(typeof body.time, 'string')
 })
 
@@ -234,3 +237,74 @@ test('a throwing onExec does not break exec', async (t) => {
   assert.equal(response.status, 200)
   assert.equal((await response.json()).stdout, 'ran:echo hi')
 })
+
+test('file routes are closed when the file channel is disabled', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'pc-bridge-srv-'))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  const { url } = await startBridge(t, { file: { enabled: false, cwd: dir } })
+
+  const health = await (await fetch(`${url}/health`)).json()
+  assert.deepEqual([...health.capabilities].sort(), ['exec', 'pair', 'ping'])
+
+  const info = await (await fetch(`${url}/info`, { headers })).json()
+  assert.equal(info.file.enabled, false)
+
+  const stat = await fetch(`${url}/file/stat?path=${encodeURIComponent(join(dir, 'x.txt'))}`, { headers })
+  assert.equal(stat.status, 404)
+  const read = await fetch(`${url}/file/read?path=${encodeURIComponent(join(dir, 'x.txt'))}`, { headers })
+  assert.equal(read.status, 404)
+  const write = await fetch(`${url}/file/write`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ path: join(dir, 'x.txt'), uploadId: '0123456789abcdef', data: 'YQ==', final: true }),
+  })
+  assert.equal(write.status, 404)
+})
+
+test('file routes write, read and list with the shared secret', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'pc-bridge-srv-'))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  const audits = []
+  const { url } = await startBridge(t, {
+    file: { roots: [], cwd: dir, chunkBytes: 65536, maxBytes: 1024 * 1024 },
+    onFile: (entry) => audits.push(entry),
+  })
+  const target = join(dir, 'hello.txt')
+  const query = `?path=${encodeURIComponent(target)}`
+
+  const denied = await fetch(`${url}/file/stat${query}`)
+  assert.equal(denied.status, 401)
+
+  const missing = await (await fetch(`${url}/file/stat${query}`, { headers })).json()
+  assert.equal(missing.exists, false)
+
+  const written = await fetch(`${url}/file/write`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      path: target,
+      uploadId: '0123456789abcdef',
+      data: Buffer.from('你好 bridge', 'utf8').toString('base64'),
+      final: true,
+    }),
+  })
+  const writeBody = await written.json()
+  assert.equal(written.status, 200)
+  assert.equal(writeBody.ok, true)
+  assert.equal(writeBody.size, Buffer.byteLength('你好 bridge'))
+
+  const read = await (await fetch(`${url}/file/read${query}&offset=0&maxBytes=64`, { headers })).json()
+  assert.equal(Buffer.from(read.data, 'base64').toString('utf8'), '你好 bridge')
+  assert.equal(read.eof, true)
+
+  const list = await (await fetch(`${url}/file/list?path=${encodeURIComponent(dir)}`, { headers })).json()
+  assert.equal(list.entries.some((entry) => entry.name === 'hello.txt'), true)
+
+  const info = await (await fetch(`${url}/info`, { headers })).json()
+  assert.equal(info.file.enabled, true)
+  assert.equal(info.file.chunkBytes, 65536)
+
+  assert.deepEqual(audits.map((entry) => entry.op).sort(), ['list', 'read', 'stat', 'write'])
+  assert.equal(audits.every((entry) => typeof entry.ms === 'number'), true)
+})
+

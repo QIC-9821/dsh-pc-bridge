@@ -152,6 +152,61 @@ test('applyPatch persists settings and restart re-reads them', async (t) => {
   await runtime.stop()
 })
 
+test('fileToolsEnabled registers the file tools on its own switch', async (t) => {
+  const { ctx, registered } = toolsCtx()
+  const { runtime } = await withRuntime(t, {
+    overrides: {
+      toolsMode: 'off',
+      peerUrl: 'http://127.0.0.1:18790',
+      fileToolsEnabled: true,
+    },
+    ctx,
+  })
+  const status = await runtime.start()
+  assert.equal(status.tools.mode, 'off')
+  assert.equal(status.files.toolsEnabled, true)
+  assert.deepEqual(status.tools.registered.sort(), ['pc_file_list', 'pc_file_read', 'pc_file_write'])
+  assert.deepEqual(registered.sort(), ['pc_file_list', 'pc_file_read', 'pc_file_write'])
+  await runtime.stop()
+})
+
+test('toggling fileToolsEnabled keeps the listener and only changes the registry', async (t) => {
+  const { runtime } = await withRuntime(t, { overrides: { toolsMode: 'always' }, ctx: toolsCtx().ctx })
+  const started = await runtime.start()
+  const port = started.listen.port
+  assert.deepEqual(started.tools.registered.sort(), ['pc_exec', 'pc_ping'])
+  assert.equal(started.files.toolsEnabled, false)
+
+  const enabled = await runtime.applyPatch({ fileToolsEnabled: true })
+  assert.deepEqual(enabled.warnings, [])
+  assert.equal(enabled.status.listen.port, port, 'the listener must not restart for a registry-only change')
+  assert.deepEqual(enabled.status.tools.registered.sort(), [
+    'pc_exec',
+    'pc_file_list',
+    'pc_file_read',
+    'pc_file_write',
+    'pc_ping',
+  ])
+
+  const disabled = await runtime.applyPatch({ fileToolsEnabled: false })
+  assert.equal(disabled.status.listen.port, port)
+  assert.deepEqual(disabled.status.tools.registered.sort(), ['pc_exec', 'pc_ping'])
+  await runtime.stop()
+})
+
+test('status reports the file channel defaults', async (t) => {
+  const { runtime } = await withRuntime(t)
+  const status = await runtime.start()
+  assert.deepEqual(status.files, {
+    enabled: true,
+    toolsEnabled: false,
+    roots: [],
+    chunkBytes: 1048576,
+    maxBytes: 67108864,
+  })
+  await runtime.stop()
+})
+
 test('auditTail returns newest first and skips torn lines', async (t) => {
   const { runtime, home } = await withRuntime(t)
   await runtime.start()

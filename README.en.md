@@ -85,6 +85,11 @@ After installing, open **Settings → 电脑执行桥** and configure the keys b
 | `sshKeyPath` | empty | private key; empty = ssh default |
 | `tunnelRemotePort` / `tunnelLocalPort` | `18790` | forwarded ports (both bound to 127.0.0.1) |
 | `toolsMode` | `auto` | `auto` registers tools only with a `peerUrl` / non-`off` `remoteMode`; `always` keeps them registered; `off` disables them |
+| `fileEnabled` | `true` | serve the file channel (`/file/stat|list|read|write`). Off means these endpoints are not mounted at all (404), whatever the tools say |
+| `fileToolsEnabled` | `false` | separate switch for `pc_file_list` / `pc_file_read` / `pc_file_write`. Off keeps them unregistered (saves tokens every turn); independent of `toolsMode`, so `toolsMode: off` + this on still registers the three file tools |
+| `fileRoots` | `[]` | directories the peer may read and write (empty = no restriction); relative entries resolve against `cwd` |
+| `fileChunkBytes` | `1048576` | transfer chunk size (64 KiB–16 MiB) |
+| `fileMaxBytes` | `67108864` | per-file transfer cap (1 MiB–4 GiB) |
 | `remoteMode` | `off` | `off` / `tailscale` / `ssh`. `tailscale` binds the tailnet address when Tailscale is online (falling back to `0.0.0.0` when it is not) and shows the remote URL on the settings page; any non-`off` value keeps `pc_ping` / `pc_exec` registered |
 | `warpCoexist` | `true` | with `remoteMode: tailscale`, if WARP is in tunnel mode at start, switch it to DNS-only (`warp-cli mode doh`) so Tailscale stays online; `false` leaves WARP completely alone |
 | `discoveryEnabled` | `true` | answer UDP discovery probes |
@@ -93,7 +98,7 @@ After installing, open **Settings → 电脑执行桥** and configure the keys b
 | `auditKeep` | `5` | rotated `audit.jsonl` generations kept |
 | `purgeOnUninstall` | `false` | experimental: on teardown, delete the data dir when the profile no longer depends on this plugin |
 
-## Settings UI (0.4.0)
+## Settings UI (0.5.0)
 
 Open **Settings → 电脑执行桥**. Everything the page changes is written to
 `$DSH_HOME/pc-bridge/settings.json` (on Windows: `C:\Users\<you>\.dsh\pc-bridge\settings.json`) and applies on the next start:
@@ -105,7 +110,11 @@ Open **Settings → 电脑执行桥**. Everything the page changes is written to
 - nearby computers: one UDP scan, then fill `peerUrl` with a click;
 - pairing: show a 6-digit code, or enter a peer address plus its code. The peer's name, platform, transport and pairing time are remembered, plus a history of up to 10 paired devices (deduped by address) with a "disconnect" action;
 - tools: one checkbox — "register pc_ping / pc_exec even without a paired peer". Unchecked (default) registers only with a `peerUrl` / non-`off` `remoteMode` (saves ~0.3k tokens per turn); checked means `toolsMode: always`. Use the master switch to turn tools off entirely;
-- the footer has only "save and apply", "test connection" and "rotate secret"; saving restarts the bridge listener only (milliseconds, in-process), **never DSH**;
+- **file transfer** (the second tab at the top of this section; a sub-page of 电脑执行桥, not a separate settings section):
+  - "file tools" checkbox (`fileToolsEnabled`, **off** by default): while off the three `pc_file_*` tools are not registered at all — that is the default, so their schemas cost nothing per turn; turning it on and saving takes effect immediately;
+  - "let the peer access files on this machine" checkbox (`fileEnabled`, on by default), plus `fileRoots` (one root per line), `fileChunkBytes` and `fileMaxBytes`; changing these restarts the listener once;
+  - a "self-test" button at the bottom (`POST /pc-bridge/api/file-test`): writes, reads, stats and deletes a temp file locally and returns per-step timings, to prove the file layer and the root configuration really work;
+- the footer has only "save and apply", "test connection" and "rotate secret"; saving restarts the bridge listener only (milliseconds, in-process), **never DSH**; a patch touching only `toolsMode` / `fileToolsEnabled` does not restart at all — it just re-registers the tool table;
 - advanced: port, timeouts, output cap, pairing-code lifetime, audit generations, discovery toggle, secret file path (`secretFile`), uninstall cleanup;
 - secret path: changing `secretFile` migrates the file — write the new one (mode 600), verify it, persist the setting, restart, then delete the old file (a failed delete only warns, no rollback); refused while the secret comes from the plugin config or an environment variable;
 - "delete local data": a button behind a confirmation; removes the secret, `settings.json`, `audit.jsonl*` and `bridge.log*` (the directory stays);
@@ -172,6 +181,9 @@ curl -s http://127.0.0.1:18790/ping -H "x-pc-secret: $DSH_PC_BRIDGE_SECRET"
 ```bash
 PC_BRIDGE_SECRET=... pcctl ping
 PC_BRIDGE_SECRET=... pcctl exec -- "hostname; echo OK"
+PC_BRIDGE_SECRET=... pcctl file list /tmp
+PC_BRIDGE_SECRET=... pcctl file get /tmp/report.pdf --out ./report.pdf
+PC_BRIDGE_SECRET=... pcctl file put ./build.zip /srv/app/build.zip
 ```
 
 ## Security
@@ -180,7 +192,9 @@ PC_BRIDGE_SECRET=... pcctl exec -- "hostname; echo OK"
 - Every `/ping`, `/exec` and `/info` request is checked against the shared secret (`timingSafeEqual`); missing or wrong → 401.
 - `/pair` is unauthenticated but requires a 6-digit single-use code; 5 consecutive failures from one IP lock pairing for 10 minutes, and a code expires after 300 s by default.
 - `/health` returns only version, platform and capabilities — no hostname, user or secret.
-- Body ≤ 64 KiB, command ≤ 8 KiB; output is truncated; a timeout kills the process tree.
+- `/file/stat|list|read|write` sit at the same level as `/exec`: same shared secret, 401 without it; with `fileEnabled: false` the routes are not mounted at all (404).
+- Paths are confined to `fileRoots` (resolved through `realpath` first, so a symlink/junction pointing outside a root is refused with 403); an empty `fileRoots` means "no restriction" — tighten it when you need to.
+- Body ≤ 64 KiB, command ≤ 8 KiB; output is truncated; a timeout kills the process tree; uploads go to `<target>.pcbridge-<uploadId>.part` and are renamed only after the last chunk's whole-file sha256 matches, so a failed transfer never leaves half a target file.
 - The secret never sits in config, and logs record only where it came from (`env:` / `file:`); the audit log stores commands and exit codes, never output.
 - The bridge is **arbitrary command execution**. Give the secret or pairing code only to peers you trust, and only open LAN mode or a tunnel for such a peer.
 
@@ -188,11 +202,15 @@ PC_BRIDGE_SECRET=... pcctl exec -- "hostname; echo OK"
 
 - `pc_ping` → `{ok, host, user, shell, now}` or a network error.
 - `pc_exec {"command":"...","timeoutSec":30}` → `{ok, exitCode, stdout, stderr, durationMs, timedOut, truncated}`.
+- `pc_file_list {"path":"/data"}` → directory entries (`name/type/size/mtime`), optional `limit`.
+- `pc_file_read {"path":"...","offset":0,"maxBytes":65536,"encoding":"auto"}` → one inline chunk (UTF-8 text or base64, plus `sha256` and `nextOffset`); pass `dest` instead to download the whole file (writes `.pcbridge.part`, verifies every chunk's sha256, then renames).
+- `pc_file_write {"path":"...","content":"..."}` → inline write (≤ 1 MiB); pass `source` to upload a local file (chunked, per-chunk sha256, whole-file sha256 on the last chunk); `append` and `createDirs` are optional.
+- The three `pc_file_*` tools are registered only while "file transfer → file tools" is on in the settings page, so `toolsMode` (`pc_ping`/`pc_exec`) and `fileToolsEnabled` can be switched independently.
 - The default `toolsMode: auto` does not keep either tool registered while no `peerUrl` is configured (each tool schema costs about 0.3k tokens per turn); switch to `always` on the settings page, or fill in `peerUrl`.
 
 ## Audit
 
-`$DSH_HOME/pc-bridge/audit.jsonl` holds one JSON object per line: start/stop, config changes, pairing, executions (command, exit code, duration, source IP — no output), and WARP mode switches.
+`$DSH_HOME/pc-bridge/audit.jsonl` holds one JSON object per line: start/stop, config changes, pairing, executions (command, exit code, duration, source IP — no output), WARP mode switches, and file operations (`kind:"file"`: `op`, `path`, `bytes`, `ok`, `ms`, `ip` — **never file contents**).
 The file rotates at 1 MB and keeps `auditKeep` generations; the settings page shows only the last 20 entries.
 
 ## Development
