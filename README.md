@@ -41,7 +41,7 @@ DeepSeek Harness 插件：在电脑上开一个小 HTTP 桥，让对端（另一
 dsh plugin add dsh-pc-bridge
 
 # 直接从 GitHub tag 装
-dsh plugin add github:QIC-9821/dsh-pc-bridge#v0.4.1
+dsh plugin add github:QIC-9821/dsh-pc-bridge#v0.5.0
 
 # 本地目录（开发时）
 dsh plugin add /absolute/path/to/dsh-pc-bridge
