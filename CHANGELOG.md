@@ -4,6 +4,27 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-11-19
+
+### Added
+
+- Address memory (`rememberPeer`, off by default): once a caller proves it knows
+  the shared secret, the bridge records its address under one of four network
+  kinds (hotspot / LAN / tailnet / other) in `<stateDir>/peers.json`. Repeats
+  inside ten minutes are throttled, one address is kept per kind, and loopback
+  callers are never recorded.
+- `connectionMode` and `peerHistory` config fields: which kind of connection is
+  in use, plus at most two remembered peer addresses per kind (newest first),
+  so switching networks becomes a click instead of typing an address again.
+- Peer API on the bridge: `GET /peers`, `POST /peers/delete {mode}` and
+  `POST /peers/use {mode}`. `use` points `peerUrl` at the remembered address
+  (and flips `remoteMode` to `tailscale` for a tailnet entry), then restarts the
+  listener so the new peer takes effect.
+- Local UI API: `GET /pc-bridge/api/peers`, `POST /pc-bridge/api/peers/delete`
+  and `POST /pc-bridge/api/peers/use`.
+- `lib/peer-memory.mjs` (classification, atomic address file, chip history) and
+  `lib/peer-directory.mjs` (the runtime-facing wrapper).
+
 ## [0.5.0] - 2026-11-18
 
 ### Added

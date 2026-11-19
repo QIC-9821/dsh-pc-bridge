@@ -8,7 +8,7 @@ window.__ModuleLoader__.load({
     const API = '/pc-bridge/api/'
     // Changes whenever the UI bundle is edited; surfaced in diagnostics so a
     // stale browser module is immediately distinguishable from a fresh one.
-    const BUILD = 'ui-2026-11-18-files'
+    const BUILD = 'ui-2026-11-19-tabs'
 
     const CARD = {
       border: '1px solid var(--dsh-border, rgba(127,127,127,.28))',
@@ -44,6 +44,8 @@ window.__ModuleLoader__.load({
       color: '#fff',
     }
     const MUTED = { fontSize: 12.5, opacity: 0.65 }
+    // Names of the peer address classes the server records (lib/peer-memory.mjs).
+    const MODE_LABELS = { hotspot: '热点', lan: '局域网', tailnet: 'Tailscale', other: '其他' }
     const ROW = { display: 'flex', justifyContent: 'space-between', gap: 12, padding: '4px 0', fontSize: 13 }
     const GRID = { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10 }
 
@@ -252,6 +254,9 @@ window.__ModuleLoader__.load({
       // not next to it, so it gets a tab here instead of its own settings entry.
       const [tab, setTab] = useState('overview')
       const [fileTest, setFileTest] = useState(null)
+      const [peersView, setPeersView] = useState(null)
+      const [peersError, setPeersError] = useState('')
+      const [peerBusy, setPeerBusy] = useState('')
 
       const load = useCallback(async () => {
         try {
@@ -290,6 +295,39 @@ window.__ModuleLoader__.load({
         return () => clearInterval(timer)
       }, [pairCode])
 
+      const loadPeers = useCallback(async () => {
+        try {
+          const next = await api('peers')
+          setPeersView(next)
+          setPeersError('')
+        } catch (err) {
+          setPeersError(String(err?.message || err))
+        }
+      }, [])
+
+      // Address memory is a server-side file; read it when the tab is opened
+      // instead of on every five-second status poll.
+      useEffect(() => {
+        if (tab === 'ext') void loadPeers()
+      }, [tab, loadPeers])
+
+      async function peerAction(kind, mode) {
+        setPeerBusy(`${kind}-${mode}`)
+        setError('')
+        setNote('')
+        try {
+          await post(`peers/${kind}`, { mode })
+          await loadPeers()
+          setNote(kind === 'use'
+            ? `已把对端地址切到记住的 ${mode} 地址。`
+            : `已删除记住的 ${mode} 地址。`)
+        } catch (err) {
+          setError(String(err?.message || err))
+        } finally {
+          setPeerBusy('')
+        }
+      }
+
       const config = data?.config || {}
       const status = data?.status || {}
       const addresses = Array.isArray(status.addresses) ? status.addresses : []
@@ -308,6 +346,22 @@ window.__ModuleLoader__.load({
       const pairedTransport = value('peerTransport') || peer.transport || '—'
       const pairedUrl = value('peerUrl') || peer.url || ''
       const pairedAt = value('peerPairedAt') || peer.pairedAt || ''
+
+      // The connection currently in use, derived from the saved peer address.
+      const connectionLabel = (() => {
+        const url = String(pairedUrl || '')
+        if (!url) return '未连接'
+        let host = ''
+        try {
+          host = new URL(url.includes('://') ? url : `http://${url}`).hostname.toLowerCase()
+        } catch {
+          return String(value('connectionMode') || '自定义地址')
+        }
+        if (host.endsWith('.ts.net')) return 'Tailscale 异地'
+        if (/^192\.168\.(137|43)\./.test(host) || /^172\.20\.10\./.test(host)) return '热点直连'
+        if (/^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(host)) return '局域网直连'
+        return '自定义地址'
+      })()
 
       const derivedMode = String(value('remoteMode') || '') === 'tailscale'
         ? 'remote'
@@ -609,6 +663,10 @@ window.__ModuleLoader__.load({
             h('span', { key: 'k' }, '运行状态'),
             h('b', { key: 'v', style: { color: status.state === 'running' ? '#16a34a' : status.state === 'error' ? '#ef4444' : status.state === 'disabled' ? '#f59e0b' : undefined } }, stateLabel(status.state)),
           ]),
+          h('div', { key: 'conn', style: ROW }, [
+            h('span', { key: 'k' }, '连接方式'),
+            h('b', { key: 'v' }, connectionLabel),
+          ]),
           h('div', { key: 'listen', style: ROW }, [
             h('span', { key: 'k' }, '监听地址'),
             h('span', { key: 'v' }, status.listen ? `http://${status.listen.host}:${status.listen.port}` : '未监听'),
@@ -796,6 +854,25 @@ window.__ModuleLoader__.load({
               onChange: (next) => set('peerUrl', next),
             }))
           : null,
+        (() => {
+          const history = value('peerHistory') || {}
+          const chips = Object.entries(history).flatMap(([kind, hosts]) =>
+            (Array.isArray(hosts) ? hosts : []).map((host) => ({ kind, host })),
+          )
+          if (!chips.length) return null
+          return h('div', { key: 'chips', style: { marginTop: 10 } }, [
+            h('div', { key: 'h', style: { ...MUTED, marginBottom: 4 } }, '记住过的地址（点一下填进对端地址，再保存）'),
+            h('div', { key: 'row', style: { display: 'flex', gap: 6, flexWrap: 'wrap' } }, chips.map(({ kind, host }, index) => h('button', {
+              key: `${kind}-${host}-${index}`,
+              style: { ...BUTTON, padding: '3px 10px', fontSize: 12 },
+              onClick: () => {
+                const shown = host.includes(':') ? `[${host}]` : host
+                set('peerUrl', `http://${shown}:${listenPort || 18790}`)
+                setMode('custom')
+              },
+            }, `${MODE_LABELS[kind] || kind} · ${host}`))),
+          ])
+        })(),
         h('div', { key: 'tip', style: { ...MUTED, marginTop: 8 } }, '切换只改草稿里的监听地址，不会清空已配对的对端；点「保存并应用」才生效。'),
       ])
 
@@ -908,6 +985,53 @@ window.__ModuleLoader__.load({
           help: '不勾（默认）：只有填了对端地址或开了远程模式才注册，平时不占工具位、省 token。勾上：无论有没有对端都注册。要完全关掉工具？用上面的总开关。',
           onChange: (next) => set('toolsMode', next ? 'always' : 'auto'),
         }),
+      ])
+
+      const rememberCard = h(Card, { key: 'remember', title: '记住来访地址' }, [
+        h(Check, {
+          key: 'remember',
+          checked: value('rememberPeer') === true,
+          label: '记住连进来的电脑地址',
+          help: '打开后，每次对端通过口令调用本机，就把它的来源地址按连接方式记进 peers.json（每种只留最后一条）。之后在对端填地址时可以直接点记住的地址。关闭就当作纯服务端，不写任何记录。',
+          onChange: (next) => set('rememberPeer', next),
+        }),
+        h('div', { key: 'state', style: { ...MUTED, marginTop: 6 } }, `已记住 ${Object.keys(peersView?.records || {}).length} 条；在「扩展」标签页里预览和删除。`),
+      ])
+
+      const peerGroup = (title, view) => h('div', { key: `group-${title}`, style: { marginBottom: 10 } }, [
+        h('div', { key: 'title', style: { ...LABEL, marginBottom: 4 } }, title),
+        Object.entries(view || {}).length === 0
+          ? h('div', { key: 'none', style: MUTED }, '还没有记录。')
+          : Object.entries(view || {}).map(([kind, record]) => h('div', { key: kind, style: { ...ROW, alignItems: 'center' } }, [
+              h('span', { key: 'k' }, `${{ hotspot: '热点', lan: '局域网', tailnet: 'Tailscale', other: '其他' }[kind] || kind}`),
+              h('span', { key: 'v', style: { display: 'inline-flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' } }, [
+                h('code', { key: 'h', style: { fontSize: 12 } }, String(record?.host || '')),
+                h('span', { key: 'at', style: { ...MUTED, fontSize: 11.5 } }, record?.at ? clock(record.at) : ''),
+                h('button', {
+                  key: 'use',
+                  style: { ...BUTTON, padding: '2px 8px', fontSize: 11.5 },
+                  disabled: Boolean(peerBusy),
+                  onClick: () => void peerAction('use', kind),
+                }, peerBusy === `use-${kind}` ? '切换中…' : '用它连'),
+                h('button', {
+                  key: 'del',
+                  style: { ...BUTTON, padding: '2px 8px', fontSize: 11.5, borderColor: '#ef4444', color: '#ef4444' },
+                  disabled: Boolean(peerBusy),
+                  onClick: () => void peerAction('delete', kind),
+                }, peerBusy === `delete-${kind}` ? '删除中…' : '删除'),
+              ]),
+            ])),
+      ])
+
+      const peersCard = h(Card, { key: 'peers', title: '记住的地址' }, [
+        peersError
+          ? h('div', { key: 'err', style: { color: '#ef4444', fontSize: 12.5, marginBottom: 8 } }, peersError)
+          : null,
+        h('div', { key: 'hint', style: { ...MUTED, marginBottom: 8 } }, '本机记录的是「别人连进来」时看到的地址；「用它连」会把它写进对端地址并保存（会重启一次监听）。'),
+        peerGroup('本机记录', peersView?.records || {}),
+        h('div', { key: 'actions', style: { display: 'flex', gap: 8, marginTop: 4 } }, [
+          h('button', { key: 'refresh', style: BUTTON, disabled: Boolean(peerBusy), onClick: () => void loadPeers() }, '刷新'),
+        ]),
       ])
 
       const files = status.files || {}
@@ -1146,11 +1270,15 @@ window.__ModuleLoader__.load({
             paddingBottom: 8,
             borderBottom: '1px solid var(--dsh-border, rgba(127,127,127,.2))',
           },
-        }, [tabButton('overview', '总览'), tabButton('files', '文件传输')]),
+        }, [tabButton('overview', '总览'), tabButton('connect', '连接方式'), tabButton('files', '文件传输'), tabButton('ext', '扩展')]),
 
         ...(tab === 'files'
           ? filesTab
-          : [enabledCard, statusCard, addressCard, networkCard, modeCard, discoverCard, pairCard, toolsCard, advancedCard, auditCard, testCard]),
+          : tab === 'connect'
+            ? [addressCard, networkCard, modeCard, discoverCard, pairCard, testCard]
+            : tab === 'ext'
+              ? [peersCard, advancedCard, auditCard]
+              : [enabledCard, statusCard, rememberCard, toolsCard]),
         footer,
       ])
     }

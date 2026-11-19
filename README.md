@@ -41,7 +41,7 @@ DeepSeek Harness 插件：在电脑上开一个小 HTTP 桥，让对端（另一
 dsh plugin add dsh-pc-bridge
 
 # 直接从 GitHub tag 装
-dsh plugin add github:QIC-9821/dsh-pc-bridge#v0.5.0
+dsh plugin add github:QIC-9821/dsh-pc-bridge#v0.6.0
 
 # 本地目录（开发时）
 dsh plugin add /absolute/path/to/dsh-pc-bridge
@@ -95,18 +95,21 @@ dsh plugin add /absolute/path/to/dsh-pc-bridge
 | `discoveryEnabled` | `true` | 是否回应局域网 UDP 发现 |
 | `discoveryPort` | `18791` | 发现端口 |
 | `pairTtlSec` | `300` | 配对码有效期（30–3600 秒） |
+| `rememberPeer` | `false` | 记住谁连过本机（纯服务端常用）；写 `$DSH_HOME/pc-bridge/peers.json`，每种方式只留 1 条 |
+| `connectionMode` | 空 | 最近一次「用它连」选的方式：`off` / `hotspot` / `lan` / `tailnet` / `other` / `custom` |
+| `peerHistory` | `{}` | 每种连接方式最近 2 个对端地址，设置页显示成快捷按钮 |
 | `auditKeep` | `5` | `audit.jsonl` 超过 1 MB 时保留的历史份数 |
 | `purgeOnUninstall` | `false` | 实验性：插件被移除时尝试删除本机数据（密钥/设置/审计/日志）。依赖 DSH 在卸载时触发插件 teardown，默认关 |
 
-## 设置页（0.5.0）
+## 设置页（0.6.0）
 
-安装后打开 **设置 → 电脑执行桥**，里面能改的东西都会写进 `$DSH_HOME/pc-bridge/settings.json`
+安装后打开 **设置 → 电脑执行桥**，页面按用途分成四个页签：**总览 / 连接方式 / 文件传输 / 扩展**。
+里面能改的东西都会写进 `$DSH_HOME/pc-bridge/settings.json`
 （Windows 默认 `C:\Users\<你>\.dsh\pc-bridge\settings.json`），下次启动仍然生效：
 
-- 开关卡：总开关（`enabled`），拨动即生效、不用点保存。关掉后插件照常加载、设置页照常可用，但不监听端口、不注册 `pc_ping` / `pc_exec`、不跑 UDP 发现；
-- 状态卡：运行状态、监听地址、运行时长、已注册的工具、密钥来源与指纹、Tailscale 地址、对端连接、隧道、发现、最近错误；
+- **总览**：总开关、状态卡（运行状态、**实时连接方式**：未连接 / 热点直连 / 局域网直连 / Tailscale 异地 / 自定义地址 / 监听地址 / 运行时长 / 已注册工具 / 密钥指纹 / 对端连接 / 隧道 / 发现 / 最近错误）、**记住来访地址**（`rememberPeer`）、工具勾选框；
 - 远程连接（Tailscale）与 WARP：显示 Tailscale 是否在线、tailnet 地址、可复制的远程 URL；提供「WARP 只做 DNS（共存）」「恢复 WARP 隧道」「刷新网络状态」三个按钮，以及「远程模式启动时自动让 WARP 只做 DNS」勾选框（`warpCoexist`）；
-- 连接方式：本机（`127.0.0.1`）/ 局域网（`0.0.0.0`）/ 远程（Tailscale，优先绑 tailnet 地址，Tailscale 不在线时退回 `0.0.0.0`）/ 自定义 `peerUrl`；切模式不会清掉已配对的对端地址；
+- **连接方式**：本机（`127.0.0.1`）/ 局域网（`0.0.0.0`）/ 远程（Tailscale，优先绑 tailnet 地址，Tailscale 不在线时退回 `0.0.0.0`）/ 自定义 `peerUrl`；切模式不会清掉已配对的对端地址；卡片底部会把 `peerHistory` 里每种方式最近 2 个地址显示成快捷按钮，点一下填进 `peerUrl`；
 - 附近的电脑：点「搜索」发一次 UDP 扫描，选中设备就能填进 `peerUrl`；
 - 配对：本机生成 6 位码给对端输入，或输入对端的地址 + 码，成功后双方共用同一把密钥；配对成功会记住对端名称、平台、传输方式、配对时间，被配对的设备也记进历史（最多 10 台，按地址去重），卡片上可以直接「断开配对」；
 - 工具：一个勾选框「没配对端时也注册 pc_ping / pc_exec」。不勾（默认）= 只有填了对端地址或开了远程模式才注册，平时省 token；勾上 = 总是注册（`toolsMode: always`）。要完全关掉工具用总开关；
@@ -118,7 +121,19 @@ dsh plugin add /absolute/path/to/dsh-pc-bridge
 - 高级：端口、超时、输出上限、配对码有效期、审计份数、发现开关、密钥文件路径（`secretFile`）、卸载清理开关；
 - 密钥路径：改 `secretFile` 时会「写新文件 → 读回校验 → 改设置 → 重启 → 删旧文件」，保存后执行桥自动重启一次（毫秒级），不用重启软件，旧文件删不掉只给警告、不回滚；密钥来自 `secret` 配置或环境变量时拒绝迁移；
 - 删除本机数据：按钮 + 二次确认，清掉密钥文件、`settings.json`、`audit.jsonl*`、`bridge.log*`（目录保留），适合卸载前手动收拾；
-- 审计：最近 20 条 `audit.jsonl`（start / stop / restart / config / pair / exec / secret）。
+- 审计：最近 20 条 `audit.jsonl`（start / stop / restart / config / pair / exec / secret）；
+- **扩展**：记住的地址（本机记录，四类各一行，可「用它连」/ 删除）、高级参数、审计。
+
+### 记住来访地址（0.6.0）
+
+把某台机器当纯服务端（只等别人来连）时，打开总览里的「记住来访地址」（`rememberPeer`）：
+任何通过 `x-pc-secret` 校验的请求都会把来源 IP 按方式分类记进 `$DSH_HOME/pc-bridge/peers.json`
+（热点 `192.168.137.*`、`192.168.43.*`、`172.20.10.*`；局域网其余 RFC1918；Tailscale `100.64.0.0/10` 与 `*.ts.net`；其他），
+每种方式只留最后 1 条，同一地址 10 分钟内不重复写。地址在「扩展」页预览、删除；点「用它连」会把它写进 `peerUrl` 并重启监听。
+关掉开关就只是普通服务端，不记录任何东西。它只在服务端本地写文件，不调模型、不加工具参数，所以不耗 token。
+
+对端 API（需 `x-pc-secret`）：`GET /peers`、`POST /peers/delete {mode}`、`POST /peers/use {mode}`；
+本机设置页走 `/pc-bridge/api/peers`、`/pc-bridge/api/peers/delete`、`/pc-bridge/api/peers/use`。
 
 页面调用的是本地 API `/pc-bridge/api/*`，和 Agent 用的 `/ping`、`/exec` 是两条独立的通道。
 

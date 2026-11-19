@@ -6,3 +6,4 @@ secret
 coverage/
 .env
 *.local
+*.tgz

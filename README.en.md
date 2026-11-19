@@ -41,7 +41,7 @@ Pick one:
 dsh plugin add dsh-pc-bridge
 
 # straight from the GitHub tag
-dsh plugin add github:QIC-9821/dsh-pc-bridge#v0.5.0
+dsh plugin add github:QIC-9821/dsh-pc-bridge#v0.6.0
 
 # local checkout (development)
 dsh plugin add /absolute/path/to/dsh-pc-bridge
@@ -98,7 +98,7 @@ After installing, open **Settings → 电脑执行桥** and configure the keys b
 | `auditKeep` | `5` | rotated `audit.jsonl` generations kept |
 | `purgeOnUninstall` | `false` | experimental: on teardown, delete the data dir when the profile no longer depends on this plugin |
 
-## Settings UI (0.5.0)
+## Settings UI (0.6.0)
 
 Open **Settings → 电脑执行桥**. Everything the page changes is written to
 `$DSH_HOME/pc-bridge/settings.json` (on Windows: `C:\Users\<you>\.dsh\pc-bridge\settings.json`) and applies on the next start:

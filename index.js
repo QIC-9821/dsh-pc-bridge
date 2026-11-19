@@ -73,6 +73,10 @@ export const Config = z
       fileRoots: field(z.array(z.string()).default([])),
       fileChunkBytes: field(z.natural().default(1048576)),
       fileMaxBytes: field(z.natural().default(67108864)),
+      // 0.6.0: remember the addresses that called in, and which kind of
+      // connection is in use (shown in the status line).
+      rememberPeer: field(z.boolean().default(false)),
+      connectionMode: field(z.string().default('')),
     })
   : undefined
 
